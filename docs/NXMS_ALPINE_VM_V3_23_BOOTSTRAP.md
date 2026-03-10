@@ -3,6 +3,9 @@
 Last update: 2026-03-10
 Scope: full VM bootstrap for a real Alpine Linux 3.23 guest used for NXMS OpenRC + Tor runtime validation.
 
+Related:
+- [docs/NXMS_MONERO_STAGENET_TOR_BASELINE.md](/home/nxms-server/nexum-core/docs/NXMS_MONERO_STAGENET_TOR_BASELINE.md)
+
 ## Rule
 - This document is for a real VM, not WSL2.
 - The VM must boot Alpine normally with OpenRC as init.
@@ -396,6 +399,7 @@ Therefore:
 Use:
 - [docs/NXMS_OPENRC_TOR_RUNTIME_BASELINE.md](/home/nxms-server/nexum-core/docs/NXMS_OPENRC_TOR_RUNTIME_BASELINE.md)
 - [docs/NXMS_TOR_RUNTIME_P0_TEST_MATRIX.md](/home/nxms-server/nexum-core/docs/NXMS_TOR_RUNTIME_P0_TEST_MATRIX.md)
+- [docs/NXMS_MONERO_STAGENET_TOR_BASELINE.md](/home/nxms-server/nexum-core/docs/NXMS_MONERO_STAGENET_TOR_BASELINE.md)
 
 Run at minimum:
 

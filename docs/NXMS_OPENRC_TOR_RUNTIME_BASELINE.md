@@ -17,6 +17,7 @@ Scope: Alpine/OpenRC deploy baseline for the canonical `nxms-transport -> nxms-m
 - [deploy/openrc/nxms-signer.confd](/home/nxms-server/nexum-core/deploy/openrc/nxms-signer.confd)
 - [deploy/tor/nxms-mailbox-hidden-service.conf.example](/home/nxms-server/nexum-core/deploy/tor/nxms-mailbox-hidden-service.conf.example)
 - [docs/NXMS_ALPINE_VM_V3_23_BOOTSTRAP.md](/home/nxms-server/nexum-core/docs/NXMS_ALPINE_VM_V3_23_BOOTSTRAP.md)
+- [docs/NXMS_MONERO_STAGENET_TOR_BASELINE.md](/home/nxms-server/nexum-core/docs/NXMS_MONERO_STAGENET_TOR_BASELINE.md)
 
 ## Runtime Topology
 - Host A:
@@ -24,6 +25,7 @@ Scope: Alpine/OpenRC deploy baseline for the canonical `nxms-transport -> nxms-m
 - Host B:
   `nxms-signer run` with `.onion` mailbox URL and `socks5h://127.0.0.1:9050`.
   Local `monero-wallet-rpc` stays loopback-only.
+  `monerod` is a real prerequisite and should be routed over Tor.
 - `nxms-escrow-orchestrator`:
   current repo baseline is manual/control-plane tooling, not a long-running OpenRC daemon.
 
@@ -62,6 +64,7 @@ Scope: Alpine/OpenRC deploy baseline for the canonical `nxms-transport -> nxms-m
 
 ## Operational Notes
 - `nxms-mailbox` OpenRC unit is the canonical daemon baseline for mailbox.
+- `monerod stagenet + wallet-rpc` are prerequisites for truthful signer runtime validation.
 - `nxms-signer` OpenRC unit runs only canonical `run` mode.
 - Worker HTTP capability mode is intentionally not the default OpenRC signer service.
 - No OpenRC unit is shipped for orchestrator because current orchestrator binary is not a daemon.
