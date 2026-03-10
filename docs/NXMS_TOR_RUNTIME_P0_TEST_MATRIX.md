@@ -12,26 +12,50 @@ Scope: real deploy/runtime validation of the canonical cross-host path over Tor 
 - Do not treat `service-host Tor -> service-host own .onion` as a reliable gate by itself.
 
 ## P0 Coverage
+- `Stage 0: crypto/build baseline`
+  Prove pinned `liboqs`, vendored Falcon CT path and successful NXMS release build on the target Alpine/OpenRC host.
 - `Stage 1: mailbox over Tor`
   Bring up only `tor` + `nxms-mailbox` and prove loopback health, hidden service publication and onion reachability.
-- `Stage 2: signer startup over Tor`
-  Add `nxms-signer`, prove config hardening and daemon startup against the real mailbox onion.
-- `Stage 3: canonical runtime flows over Tor`
+- `Stage 2: monerod stagenet over Tor-only`
+  Add verified `monerod-stagenet`, prove loopback RPC and Tor-routed P2P posture.
+- `Stage 3: wallet-rpc loopback-only`
+  Add `monero-wallet-rpc-stagenet`, prove authenticated local RPC against the local daemon.
+- `Stage 4: signer startup over Tor`
+  Add `nxms-signer`, prove config hardening and daemon startup against the real mailbox onion and local Monero runtime.
+- `Stage 5: canonical runtime flows over Tor`
   Repeat smoke/sign/submit/orchestrated scenarios through the real onion path.
 
 - `mailbox daemon`
   `rc-service nxms-mailbox start`
   `rc-service nxms-mailbox status`
+- `crypto/build baseline`
+  `cargo check --workspace`
+  `cargo build --release -p nxms-mailbox -p nxms-signer -p nxms-escrow-orchestrator`
+  verify pinned `liboqs` and vendored Falcon CT prerequisites from bootstrap doc
 - `signer daemon`
   `rc-service nxms-signer start`
   `rc-service nxms-signer status`
+- `monerod daemon`
+  `rc-service monerod-stagenet start`
+  `rc-service monerod-stagenet status`
+- `wallet-rpc daemon`
+  `rc-service monero-wallet-rpc-stagenet start`
+  `rc-service monero-wallet-rpc-stagenet status`
 - `mailbox loopback health`
   `curl -fsS http://127.0.0.1:4010/health`
+- `monerod loopback RPC`
+  `curl -fsS http://127.0.0.1:38081/get_info`
+- `wallet-rpc auth`
+  `curl --digest -u walletrpc:<password> -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"0","method":"get_version"}' http://127.0.0.1:38088/json_rpc`
 - `hidden service publication`
   `cat /var/lib/tor/nxms-mailbox/hostname`
+- `monerod hidden service publication`
+  `cat /var/lib/tor/monerod-stagenet/hostname`
 - `mailbox onion ingress`
   from a second Tor client:
   `curl --socks5-hostname 127.0.0.1:<second-socks-port> -fsS http://<mailbox-onion>/health`
+- `monerod Tor-only posture`
+  verify `/etc/monero/stagenet.conf` contains `proxy=127.0.0.1:9050`, `tx-proxy=tor,127.0.0.1:9050,disable_noise`, and a real `anonymous-inbound=...`
 - `signer config hardening`
   `nxms-signer security check --config /etc/nxms/signer.toml`
 - `Tor smoke`
@@ -49,14 +73,23 @@ Scope: real deploy/runtime validation of the canonical cross-host path over Tor 
 Run at minimum on the target Alpine/OpenRC host:
 
 ```bash
+cargo check --workspace
+cargo build --release -p nxms-mailbox -p nxms-signer -p nxms-escrow-orchestrator
 rc-service tor restart
 rc-service nxms-mailbox restart
+rc-service monerod-stagenet restart
+rc-service monero-wallet-rpc-stagenet restart
 rc-service tor status
+rc-service monerod-stagenet status
+rc-service monero-wallet-rpc-stagenet status
 rc-service nxms-signer restart
 rc-service nxms-mailbox status
 rc-service nxms-signer status
 cat /var/lib/tor/nxms-mailbox/hostname
+cat /var/lib/tor/monerod-stagenet/hostname
 curl -fsS http://127.0.0.1:4010/health
+curl -fsS http://127.0.0.1:38081/get_info
+curl --digest -u walletrpc:<password> -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"0","method":"get_version"}' http://127.0.0.1:38088/json_rpc
 curl --socks5-hostname 127.0.0.1:<second-socks-port> -fsS http://<mailbox-onion>/health
 nxms-signer security check --config /etc/nxms/signer.toml
 ```

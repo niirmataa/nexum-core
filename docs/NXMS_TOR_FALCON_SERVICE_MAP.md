@@ -1,7 +1,13 @@
 # NXMS Tor + Falcon Service Map (Alpine/OpenRC Runtime)
 
 Last update: 2026-02-22  
-Status: Active reference (runtime/service naming and deployment map)
+Status: Historical host snapshot, not the canonical repo baseline
+
+Canonical repo-managed baseline now lives in:
+- [docs/NXMS_OPENRC_TOR_RUNTIME_BASELINE.md](/home/nxms-server/nexum-core/docs/NXMS_OPENRC_TOR_RUNTIME_BASELINE.md)
+- [docs/NXMS_MONERO_STAGENET_TOR_BASELINE.md](/home/nxms-server/nexum-core/docs/NXMS_MONERO_STAGENET_TOR_BASELINE.md)
+
+This document can still be useful as an observed host snapshot, but do not treat its older split-role services or repo paths as the target deployment model.
 
 ## Purpose
 

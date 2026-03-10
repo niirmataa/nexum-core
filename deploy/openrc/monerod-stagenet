@@ -1,0 +1,109 @@
+#!/sbin/openrc-run
+
+name="monerod-stagenet"
+description="Monero stagenet daemon (Tor-only P2P posture, loopback RPC)"
+
+command="${MONEROD_BIN:-/opt/monero/current/monerod}"
+command_args="--config-file ${MONEROD_CONFIG}"
+command_background="yes"
+pidfile="${MONEROD_PIDFILE:-/run/${RC_SVCNAME}.pid}"
+output_log="${MONEROD_STDOUT_LOG:-/var/log/monero/monerod-stagenet.log}"
+error_log="${MONEROD_STDERR_LOG:-/var/log/monero/monerod-stagenet.err}"
+
+: "${MONERO_USER:=monero}"
+: "${MONERO_GROUP:=monero}"
+: "${MONEROD_WORKDIR:=/var/lib/monero}"
+: "${MONEROD_DATA_DIR:=/var/lib/monero/stagenet}"
+: "${MONEROD_CONFIG:=/etc/monero/stagenet.conf}"
+
+depend() {
+    need localmount tor
+    use net
+    after firewall
+}
+
+service_can_read() {
+    local path="$1"
+    su -s /bin/sh -c "test -r \"$path\"" "${MONERO_USER}"
+}
+
+config_has() {
+    local pattern="$1"
+    grep -Eq "^[[:space:]]*${pattern}[[:space:]]*$" "${MONEROD_CONFIG}"
+}
+
+start_pre() {
+    checkpath --directory --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0750 /var/lib/monero
+    checkpath --directory --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0750 "${MONEROD_DATA_DIR}"
+    checkpath --directory --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0750 /var/log/monero
+    checkpath --directory --owner root:root --mode 0755 /run
+
+    checkpath --file --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0640 "${output_log}"
+    checkpath --file --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0640 "${error_log}"
+
+    if [ ! -x "${command}" ]; then
+        eerror "binary not executable: ${command}"
+        return 1
+    fi
+    if [ ! -r "${MONEROD_CONFIG}" ]; then
+        eerror "config not readable: ${MONEROD_CONFIG}"
+        return 1
+    fi
+    if ! service_can_read "${MONEROD_CONFIG}"; then
+        eerror "config not readable by ${MONERO_USER}: ${MONEROD_CONFIG}"
+        return 1
+    fi
+    if ! config_has 'stagenet=1'; then
+        eerror "config must set stagenet=1"
+        return 1
+    fi
+    if ! config_has 'rpc-bind-ip=127\.0\.0\.1'; then
+        eerror "config must keep daemon RPC on loopback (rpc-bind-ip=127.0.0.1)"
+        return 1
+    fi
+    if ! config_has 'rpc-bind-port=38081'; then
+        eerror "config must bind daemon RPC to stagenet port 38081"
+        return 1
+    fi
+    if ! config_has 'p2p-bind-ip=127\.0\.0\.1'; then
+        eerror "config must keep monerod P2P listener behind Tor (p2p-bind-ip=127.0.0.1)"
+        return 1
+    fi
+    if ! config_has 'p2p-bind-port=38084'; then
+        eerror "config must bind monerod P2P listener to 38084 for Tor anonymous inbound"
+        return 1
+    fi
+    if ! config_has 'proxy=127\.0\.0\.1:9050'; then
+        eerror "config must route peer traffic through local Tor SOCKS (proxy=127.0.0.1:9050)"
+        return 1
+    fi
+    if ! config_has 'tx-proxy=tor,127\.0\.0\.1:9050,disable_noise'; then
+        eerror "config must route transaction relay through Tor (tx-proxy=tor,127.0.0.1:9050,disable_noise)"
+        return 1
+    fi
+    if ! config_has 'anonymous-inbound=.*:38084,127\.0\.0\.1:38084'; then
+        eerror "config must define Tor anonymous inbound (<onion>:38084,127.0.0.1:38084)"
+        return 1
+    fi
+}
+
+start() {
+    ebegin "Starting ${name}"
+    start-stop-daemon \
+        --start \
+        --background \
+        --make-pidfile \
+        --pidfile "${pidfile}" \
+        --chdir "${MONEROD_WORKDIR}" \
+        --user "${MONERO_USER}:${MONERO_GROUP}" \
+        --stdout "${output_log}" \
+        --stderr "${error_log}" \
+        --exec "${command}" -- ${command_args}
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping ${name}"
+    start-stop-daemon --stop --pidfile "${pidfile}" --retry TERM/20/KILL/5
+    eend $?
+}

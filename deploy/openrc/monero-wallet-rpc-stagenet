@@ -1,0 +1,100 @@
+#!/sbin/openrc-run
+
+name="monero-wallet-rpc-stagenet"
+description="Monero wallet-rpc for NXMS signer (stagenet, loopback-only)"
+
+command="${MONERO_WALLET_RPC_BIN:-/opt/monero/current/monero-wallet-rpc}"
+command_args="--config-file ${MONERO_WALLET_RPC_CONFIG}"
+command_background="yes"
+pidfile="${MONERO_WALLET_RPC_PIDFILE:-/run/${RC_SVCNAME}.pid}"
+output_log="${MONERO_WALLET_RPC_STDOUT_LOG:-/var/log/monero/wallet-rpc-stagenet.log}"
+error_log="${MONERO_WALLET_RPC_STDERR_LOG:-/var/log/monero/wallet-rpc-stagenet.err}"
+
+: "${MONERO_USER:=monero}"
+: "${MONERO_GROUP:=monero}"
+: "${MONERO_WALLET_RPC_WORKDIR:=/var/lib/monero}"
+: "${MONERO_WALLET_RPC_WALLET_DIR:=/var/lib/monero/wallets}"
+: "${MONERO_WALLET_RPC_CONFIG:=/etc/monero/wallet-rpc-stagenet.conf}"
+
+depend() {
+    need localmount monerod-stagenet
+    after firewall
+}
+
+service_can_read() {
+    local path="$1"
+    su -s /bin/sh -c "test -r \"$path\"" "${MONERO_USER}"
+}
+
+config_has() {
+    local pattern="$1"
+    grep -Eq "^[[:space:]]*${pattern}[[:space:]]*$" "${MONERO_WALLET_RPC_CONFIG}"
+}
+
+start_pre() {
+    checkpath --directory --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0750 /var/lib/monero
+    checkpath --directory --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0750 "${MONERO_WALLET_RPC_WALLET_DIR}"
+    checkpath --directory --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0750 /var/log/monero
+    checkpath --directory --owner root:root --mode 0755 /run
+
+    checkpath --file --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0640 "${output_log}"
+    checkpath --file --owner "${MONERO_USER}:${MONERO_GROUP}" --mode 0640 "${error_log}"
+
+    if [ ! -x "${command}" ]; then
+        eerror "binary not executable: ${command}"
+        return 1
+    fi
+    if [ ! -r "${MONERO_WALLET_RPC_CONFIG}" ]; then
+        eerror "config not readable: ${MONERO_WALLET_RPC_CONFIG}"
+        return 1
+    fi
+    if ! service_can_read "${MONERO_WALLET_RPC_CONFIG}"; then
+        eerror "config not readable by ${MONERO_USER}: ${MONERO_WALLET_RPC_CONFIG}"
+        return 1
+    fi
+    if ! config_has 'stagenet=1'; then
+        eerror "config must set stagenet=1"
+        return 1
+    fi
+    if ! config_has 'rpc-bind-ip=127\.0\.0\.1'; then
+        eerror "config must keep wallet-rpc on loopback (rpc-bind-ip=127.0.0.1)"
+        return 1
+    fi
+    if ! config_has 'rpc-bind-port=38088'; then
+        eerror "config must bind wallet-rpc to stagenet port 38088"
+        return 1
+    fi
+    if ! config_has 'daemon-address=127\.0\.0\.1:38081'; then
+        eerror "config must point only to local monerod (daemon-address=127.0.0.1:38081)"
+        return 1
+    fi
+    if ! config_has 'wallet-dir=/var/lib/monero/wallets'; then
+        eerror "config must use repo baseline wallet-dir=/var/lib/monero/wallets"
+        return 1
+    fi
+    if ! config_has 'rpc-login=[^:]+:.+'; then
+        eerror "config must define rpc-login=user:password"
+        return 1
+    fi
+}
+
+start() {
+    ebegin "Starting ${name}"
+    start-stop-daemon \
+        --start \
+        --background \
+        --make-pidfile \
+        --pidfile "${pidfile}" \
+        --chdir "${MONERO_WALLET_RPC_WORKDIR}" \
+        --user "${MONERO_USER}:${MONERO_GROUP}" \
+        --stdout "${output_log}" \
+        --stderr "${error_log}" \
+        --exec "${command}" -- ${command_args}
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping ${name}"
+    start-stop-daemon --stop --pidfile "${pidfile}" --retry TERM/20/KILL/5
+    eend $?
+}

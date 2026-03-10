@@ -1,0 +1,34 @@
+# Monero daemon baseline for NXMS signer host.
+# Canonical posture:
+# - stagenet only
+# - daemon RPC loopback-only
+# - P2P listener loopback-only behind Tor hidden service
+# - peer and tx routing through local Tor SOCKS
+
+stagenet=1
+data-dir=/var/lib/monero/stagenet
+
+# Local daemon RPC for wallet-rpc only.
+rpc-bind-ip=127.0.0.1
+rpc-bind-port=38081
+restricted-rpc=0
+
+# P2P listener is hidden behind Tor only.
+p2p-bind-ip=127.0.0.1
+p2p-bind-port=38084
+
+# Tor-only posture.
+proxy=127.0.0.1:9050
+tx-proxy=tor,127.0.0.1:9050,disable_noise
+
+# Replace <monerod-onion-hostname> with the value from:
+#   /var/lib/tor/monerod-stagenet/hostname
+anonymous-inbound=<monerod-onion-hostname>:38084,127.0.0.1:38084
+
+# Extra hygiene.
+hide-my-port=1
+no-igd=1
+prune-blockchain=1
+
+# Optional, but helps make node state explicit in logs.
+log-file=/var/log/monero/monerod-stagenet-runtime.log

@@ -1,0 +1,15 @@
+# Monero stagenet P2P hidden service.
+# Install as a dedicated torrc.d fragment, for example:
+#   /etc/tor/torrc.d/monerod-stagenet.conf
+#
+# This hidden service is for monerod anonymous inbound only.
+# It is not an NXMS application endpoint.
+
+HiddenServiceDir /var/lib/tor/monerod-stagenet
+HiddenServiceVersion 3
+HiddenServicePort 38084 127.0.0.1:38084
+
+# After Tor generates the hostname, copy it into:
+#   /etc/monero/stagenet.conf
+# as:
+#   anonymous-inbound=<generated-onion>:38084,127.0.0.1:38084

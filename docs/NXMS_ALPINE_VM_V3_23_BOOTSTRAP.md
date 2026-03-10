@@ -9,6 +9,10 @@ Related:
 ## Rule
 - This document is for a real VM, not WSL2.
 - The VM must boot Alpine normally with OpenRC as init.
+- Stage order matters:
+  first the NXMS crypto/build baseline (`liboqs` + vendored Falcon CT path + release build),
+  then Monero runtime,
+  then signer runtime.
 - This is the minimum baseline to avoid the surprises already observed on WSL2:
   - `rc-service` without real OpenRC boot
   - Tor service missing
@@ -66,6 +70,7 @@ doas apk add --no-cache \
   curl \
   doas \
   git \
+  gnupg \
   openssl \
   openssl-dev \
   build-base \
@@ -93,6 +98,36 @@ command -v tor
 command -v cargo
 command -v rustfmt
 rc-service tor status || true
+```
+
+## 3.1 Verified Monero CLI
+
+Monero download can start early because sync takes time, but do not treat it as a substitute for the NXMS crypto/build baseline in section 5.
+
+Download and verify official Monero CLI before wiring OpenRC services:
+
+```bash
+mkdir -p ~/downloads/monero
+cd ~/downloads/monero
+curl -L -o monero-linux-x64.tar.bz2 https://downloads.getmonero.org/cli/linux64
+curl -LO https://www.getmonero.org/downloads/hashes.txt
+curl -LO https://raw.githubusercontent.com/monero-project/monero/master/utils/gpg_keys/binaryfate.asc
+gpg --import binaryfate.asc
+gpg --verify hashes.txt
+sha256sum monero-linux-x64.tar.bz2
+grep "$(sha256sum monero-linux-x64.tar.bz2 | cut -d' ' -f1)" hashes.txt
+tar xjf monero-linux-x64.tar.bz2
+```
+
+Install verified binaries:
+
+```bash
+cd ~/downloads/monero
+MONERO_DIR="$(find . -maxdepth 1 -type d -name 'monero-*' | head -n1)"
+doas mkdir -p /opt/monero/0.18.4.5
+doas install -m 0755 "${MONERO_DIR}/monerod" /opt/monero/0.18.4.5/monerod
+doas install -m 0755 "${MONERO_DIR}/monero-wallet-rpc" /opt/monero/0.18.4.5/monero-wallet-rpc
+doas ln -sfn /opt/monero/0.18.4.5 /opt/monero/current
 ```
 
 ## 4. Repo Checkout
@@ -197,19 +232,30 @@ Create the runtime layout:
 ```bash
 doas addgroup -S nxms || true
 doas adduser -S -D -H -h /var/lib/nxms -s /sbin/nologin -G nxms nxms || true
+doas addgroup -S monero || true
+doas adduser -S -D -H -h /var/lib/monero -s /sbin/nologin -G monero monero || true
 
 doas mkdir -p /opt/nxms/bin
+doas mkdir -p /opt/monero
 doas mkdir -p /etc/nxms
+doas mkdir -p /etc/monero
 doas mkdir -p /var/lib/nxms/mailbox
 doas mkdir -p /var/lib/nxms/signer
 doas mkdir -p /var/lib/nxms/orchestrator
+doas mkdir -p /var/lib/monero/stagenet
+doas mkdir -p /var/lib/monero/wallets
 doas mkdir -p /var/log/nxms
+doas mkdir -p /var/log/monero
 doas mkdir -p /run/secrets/nxms
 
 doas chown -R nxms:nxms /var/lib/nxms
 doas chown -R nxms:nxms /var/log/nxms
+doas chown -R monero:monero /var/lib/monero
+doas chown -R monero:monero /var/log/monero
 doas chmod 0750 /var/lib/nxms /var/lib/nxms/mailbox /var/lib/nxms/signer /var/lib/nxms/orchestrator
 doas chmod 0750 /var/log/nxms
+doas chmod 0750 /var/lib/monero /var/lib/monero/stagenet /var/lib/monero/wallets
+doas chmod 0750 /var/log/monero
 doas chown root:nxms /run/secrets/nxms
 doas chmod 0750 /run/secrets/nxms
 ```

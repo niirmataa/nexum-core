@@ -4,6 +4,10 @@ Last update: 2026-03-10
 Scope: canonical Monero runtime prerequisite for `nxms-signer run` on Alpine/OpenRC.
 
 ## Rule
+- This stage assumes the NXMS crypto baseline is already in place:
+  - pinned `liboqs`
+  - vendored Falcon CT reference code used by `nxms-transport`
+  - successful NXMS release build on the target host
 - `nxms-signer run` is not a meaningful runtime gate without real Monero services.
 - The minimum Monero runtime for signer is:
   - `monerod --stagenet`
@@ -36,11 +40,21 @@ So a signer host without real `monerod` and `wallet-rpc` is not a truthful runti
   - loopback-only to `wallet-rpc`
   - cross-host path only through `nxms-mailbox` onion + `nxms-transport`
 
+## Repo-Managed Baseline
+- [deploy/openrc/monerod-stagenet](/home/nxms-server/nexum-core/deploy/openrc/monerod-stagenet)
+- [deploy/openrc/monerod-stagenet.confd](/home/nxms-server/nexum-core/deploy/openrc/monerod-stagenet.confd)
+- [deploy/openrc/monero-wallet-rpc-stagenet](/home/nxms-server/nexum-core/deploy/openrc/monero-wallet-rpc-stagenet)
+- [deploy/openrc/monero-wallet-rpc-stagenet.confd](/home/nxms-server/nexum-core/deploy/openrc/monero-wallet-rpc-stagenet.confd)
+- [deploy/monero/monerod-stagenet.conf.example](/home/nxms-server/nexum-core/deploy/monero/monerod-stagenet.conf.example)
+- [deploy/monero/wallet-rpc-stagenet.conf.example](/home/nxms-server/nexum-core/deploy/monero/wallet-rpc-stagenet.conf.example)
+- [deploy/tor/monerod-stagenet-hidden-service.conf.example](/home/nxms-server/nexum-core/deploy/tor/monerod-stagenet-hidden-service.conf.example)
+
 ## Canonical Security Boundary
 - `Tor` is the network path for `monerod` peer connectivity.
 - `wallet-rpc` is not a cross-host service in NXMS runtime.
 - `wallet-rpc` stays local capability only for signer host.
 - `nxms-transport` still remains the only end-to-end security layer for NXMS payloads.
+- Falcon CT and `liboqs` are not optional side details here; they are part of the cryptographic baseline beneath every later signer/runtime gate.
 
 ## Baseline Ports
 - `38080` Monero stagenet P2P
@@ -55,6 +69,7 @@ So a signer host without real `monerod` and `wallet-rpc` is not a truthful runti
 - local RPC on `127.0.0.1:38081`
 - Tor-routed network path
 - preferred posture:
+  - `proxy=127.0.0.1:9050`
   - `tx-proxy=tor,127.0.0.1:9050,disable_noise`
   - `anonymous-inbound=<node-onion>:38084,127.0.0.1:38084`
 - if full Tor-only peer routing is enforced on the host, document it explicitly and keep it separate from wallet-rpc.
@@ -67,8 +82,34 @@ So a signer host without real `monerod` and `wallet-rpc` is not a truthful runti
 - authenticated
 - no remote bind
 - no Tor exposure
+- config file ownership baseline:
+  - `/etc/monero/wallet-rpc-stagenet.conf` as `root:monero 0640`
+  - keep `rpc-login` only in that local config file
+  - do not place wallet-rpc auth in OpenRC `.confd` or argv
+
+## OpenRC Install Shape
+1. Install Monero binaries to `/opt/monero/<version>/`.
+2. Maintain `/opt/monero/current` symlink to the active verified version.
+3. Install units:
+   - `/etc/init.d/monerod-stagenet`
+   - `/etc/conf.d/monerod-stagenet`
+   - `/etc/init.d/monero-wallet-rpc-stagenet`
+   - `/etc/conf.d/monero-wallet-rpc-stagenet`
+4. Install config:
+   - `/etc/monero/stagenet.conf`
+   - `/etc/monero/wallet-rpc-stagenet.conf`
+5. Install Tor fragment:
+   - `/etc/tor/torrc.d/monerod-stagenet.conf`
+6. Create runtime layout:
+   - `/var/lib/monero/stagenet`
+   - `/var/lib/monero/wallets`
+   - `/var/log/monero`
 
 ## What Must Exist Before Signer Start
+- host crypto baseline green:
+  - pinned `liboqs` installed
+  - vendored Falcon CT path intact
+  - NXMS release build completed on this host
 - `monerod` started and reachable on `127.0.0.1:38081`
 - `monero-wallet-rpc` started and reachable on `127.0.0.1:38088`
 - signer wallet present on disk
@@ -79,6 +120,8 @@ So a signer host without real `monerod` and `wallet-rpc` is not a truthful runti
 - signer mailbox `.onion` URL and scoped mailbox tokens
 
 ## Stage Order
+0. `crypto/build baseline`
+   Prove pinned `liboqs`, vendored Falcon CT path and successful NXMS release build on the target host.
 1. `mailbox over Tor`
    Already proven separately.
 2. `monerod stagenet over Tor-only`
@@ -99,12 +142,13 @@ So a signer host without real `monerod` and `wallet-rpc` is not a truthful runti
 Those come later, but they must build on this Monero baseline instead of bypassing it.
 
 ## Next Repo Work
-- add repo-managed OpenRC unit for `monerod-stagenet`
-- add repo-managed OpenRC unit for `monero-wallet-rpc-stagenet`
-- add repo-managed config example for `monerod` stagenet over Tor-only
-- add repo-managed config example for `wallet-rpc` loopback-only
-- add runtime gate docs for:
-  - daemon boot
-  - RPC health
-  - Tor-routed Monero posture
-  - wallet-rpc auth
+Immediate runtime gate to execute on Alpine/OpenRC host:
+- verify official Monero release before install
+- `rc-service tor restart`
+- `rc-service monerod-stagenet restart`
+- `rc-service monero-wallet-rpc-stagenet restart`
+- `rc-service monerod-stagenet status`
+- `rc-service monero-wallet-rpc-stagenet status`
+- `curl -fsS http://127.0.0.1:38081/get_info`
+- `curl --digest -u walletrpc:<password> -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"0","method":"get_version"}' http://127.0.0.1:38088/json_rpc`
+- confirm `proxy=127.0.0.1:9050`, `tx-proxy=tor,127.0.0.1:9050,disable_noise` and real `anonymous-inbound=...` in `/etc/monero/stagenet.conf`

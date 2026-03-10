@@ -1,0 +1,21 @@
+# Monero wallet-rpc baseline for NXMS signer host.
+# Canonical posture:
+# - stagenet only
+# - loopback-only
+# - local monerod only
+# - authenticated
+
+stagenet=1
+rpc-bind-ip=127.0.0.1
+rpc-bind-port=38088
+daemon-address=127.0.0.1:38081
+
+# Store the actual credential locally on the host.
+# This file must not be world-readable.
+rpc-login=walletrpc:replace-with-strong-password
+
+wallet-dir=/var/lib/monero/wallets
+disable-rpc-login=0
+
+# Optional explicit log file.
+log-file=/var/log/monero/wallet-rpc-stagenet-runtime.log

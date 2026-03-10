@@ -1,0 +1,10 @@
+MONERO_USER="monero"
+MONERO_GROUP="monero"
+
+MONERO_WALLET_RPC_BIN="/opt/monero/current/monero-wallet-rpc"
+MONERO_WALLET_RPC_WORKDIR="/var/lib/monero"
+MONERO_WALLET_RPC_WALLET_DIR="/var/lib/monero/wallets"
+MONERO_WALLET_RPC_CONFIG="/etc/monero/wallet-rpc-stagenet.conf"
+
+MONERO_WALLET_RPC_STDOUT_LOG="/var/log/monero/wallet-rpc-stagenet.log"
+MONERO_WALLET_RPC_STDERR_LOG="/var/log/monero/wallet-rpc-stagenet.err"

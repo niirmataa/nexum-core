@@ -1,0 +1,10 @@
+MONERO_USER="monero"
+MONERO_GROUP="monero"
+
+MONEROD_BIN="/opt/monero/current/monerod"
+MONEROD_WORKDIR="/var/lib/monero"
+MONEROD_DATA_DIR="/var/lib/monero/stagenet"
+MONEROD_CONFIG="/etc/monero/stagenet.conf"
+
+MONEROD_STDOUT_LOG="/var/log/monero/monerod-stagenet.log"
+MONEROD_STDERR_LOG="/var/log/monero/monerod-stagenet.err"

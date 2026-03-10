@@ -4,7 +4,7 @@ Last update: 2026-03-10
 
 ## Topology (recommended)
 - Host A: `nxms-mailbox` only.
-- Host B: `nxms-signer` + local `monero-wallet-rpc`.
+- Host B: `monerod-stagenet` over Tor-only + local `monero-wallet-rpc` loopback-only + `nxms-signer`.
 - Escrow API stays separate (informational only).
 
 ## Escrow HTTP Integration
