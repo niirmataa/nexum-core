@@ -1,6 +1,5 @@
 use crate::flow::{WorkflowState, expected_msg_type_for_state, outbox_idem_key, step_idem_key};
 use anyhow::{Result, anyhow};
-use reqwest::Url;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
@@ -98,18 +97,6 @@ pub struct DeadLetterItem {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SubmissionWatch {
-    pub escrow_id_hex: String,
-    pub txid: String,
-    pub required_confirmations: u64,
-    pub status: String,
-    pub last_confirmations: u64,
-    pub double_spend_seen: bool,
-    pub created_at_ms: u64,
-    pub updated_at_ms: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProposalBlob {
     pub escrow_id_hex: String,
     pub action: String,
@@ -117,32 +104,6 @@ pub struct ProposalBlob {
     pub txset_hash_hex: String,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct WorkerRoute {
-    pub escrow_id_hex: String,
-    pub role: String,
-    pub endpoint: String,
-    pub updated_at_ms: u64,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkerRouteReconcileIssue {
-    Missing,
-    Stale,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct WorkerRouteReconcileFinding {
-    pub escrow_id_hex: String,
-    pub workflow_state: WorkflowState,
-    pub role: String,
-    pub issue: WorkerRouteReconcileIssue,
-    pub endpoint: Option<String>,
-    pub route_updated_at_ms: Option<u64>,
-    pub route_age_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -200,7 +161,6 @@ pub struct WorkflowSloMetrics {
     pub outbox_retrying: u64,
     pub step_replay_duplicate_window: u64,
     pub dead_letter_window: u64,
-    pub wallet_rpc_failure_window: u64,
     pub stage_latency: BTreeMap<String, WorkflowSloStageLatency>,
 }
 
@@ -212,7 +172,6 @@ pub struct SloAlertThresholds {
     pub outbox_sent_unacked_total: u64,
     pub dead_letter_window_total: u64,
     pub replay_duplicate_window_total: u64,
-    pub wallet_rpc_failure_window_total: u64,
 }
 
 impl Default for SloAlertThresholds {
@@ -224,7 +183,6 @@ impl Default for SloAlertThresholds {
             outbox_sent_unacked_total: 50,
             dead_letter_window_total: 0,
             replay_duplicate_window_total: 25,
-            wallet_rpc_failure_window_total: 0,
         }
     }
 }
@@ -413,60 +371,6 @@ impl OrchestratorDb {
             .await?
     }
 
-    pub async fn upsert_submission_watch(
-        &self,
-        escrow_id_hex: &str,
-        txid: &str,
-        required_confirmations: u64,
-    ) -> Result<()> {
-        let path = self.path.clone();
-        let escrow_id_hex = escrow_id_hex.to_string();
-        let txid = txid.to_string();
-        tokio::task::spawn_blocking(move || {
-            upsert_submission_watch_sync(&path, &escrow_id_hex, &txid, required_confirmations)
-        })
-        .await??;
-        Ok(())
-    }
-
-    pub async fn get_submission_watch(
-        &self,
-        escrow_id_hex: &str,
-    ) -> Result<Option<SubmissionWatch>> {
-        let path = self.path.clone();
-        let escrow_id_hex = escrow_id_hex.to_string();
-        tokio::task::spawn_blocking(move || get_submission_watch_sync(&path, &escrow_id_hex))
-            .await?
-    }
-
-    pub async fn list_submission_watches(&self, limit: u32) -> Result<Vec<SubmissionWatch>> {
-        let path = self.path.clone();
-        tokio::task::spawn_blocking(move || list_submission_watches_sync(&path, limit)).await?
-    }
-
-    pub async fn update_submission_watch_progress(
-        &self,
-        escrow_id_hex: &str,
-        status: &str,
-        last_confirmations: u64,
-        double_spend_seen: bool,
-    ) -> Result<()> {
-        let path = self.path.clone();
-        let escrow_id_hex = escrow_id_hex.to_string();
-        let status = status.to_string();
-        tokio::task::spawn_blocking(move || {
-            update_submission_watch_progress_sync(
-                &path,
-                &escrow_id_hex,
-                &status,
-                last_confirmations,
-                double_spend_seen,
-            )
-        })
-        .await??;
-        Ok(())
-    }
-
     pub async fn get_workflow(&self, escrow_id_hex: &str) -> Result<Option<WorkflowInstance>> {
         let path = self.path.clone();
         let escrow_id_hex = escrow_id_hex.to_string();
@@ -514,48 +418,6 @@ impl OrchestratorDb {
         let txset_hash_hex = txset_hash_hex.to_string();
         tokio::task::spawn_blocking(move || {
             get_proposal_blob_by_txset_hash_sync(&path, &escrow_id_hex, &txset_hash_hex)
-        })
-        .await?
-    }
-
-    pub async fn upsert_worker_route(
-        &self,
-        escrow_id_hex: &str,
-        role: &str,
-        endpoint: &str,
-    ) -> Result<()> {
-        let path = self.path.clone();
-        let escrow_id_hex = escrow_id_hex.to_string();
-        let role = role.to_string();
-        let endpoint = endpoint.to_string();
-        tokio::task::spawn_blocking(move || {
-            upsert_worker_route_sync(&path, &escrow_id_hex, &role, &endpoint)
-        })
-        .await??;
-        Ok(())
-    }
-
-    pub async fn get_worker_route(
-        &self,
-        escrow_id_hex: &str,
-        role: &str,
-    ) -> Result<Option<WorkerRoute>> {
-        let path = self.path.clone();
-        let escrow_id_hex = escrow_id_hex.to_string();
-        let role = role.to_string();
-        tokio::task::spawn_blocking(move || get_worker_route_sync(&path, &escrow_id_hex, &role))
-            .await?
-    }
-
-    pub async fn reconcile_worker_routes(
-        &self,
-        stale_after_ms: u64,
-        include_terminal: bool,
-        limit: u32,
-    ) -> Result<Vec<WorkerRouteReconcileFinding>> {
-        let path = self.path.clone();
-        tokio::task::spawn_blocking(move || {
-            reconcile_worker_routes_sync(&path, stale_after_ms, include_terminal, limit)
         })
         .await?
     }
@@ -735,18 +597,6 @@ fn init_sync(path: &PathBuf) -> Result<()> {
             PRIMARY KEY (peer_id, escrow_id_hex)
         );
 
-        CREATE TABLE IF NOT EXISTS submission_watch (
-            escrow_id_hex        TEXT PRIMARY KEY,
-            txid                 TEXT NOT NULL,
-            required_confirmations INTEGER NOT NULL,
-            status               TEXT NOT NULL CHECK(status IN ('pending', 'confirmed', 'failed')),
-            last_confirmations   INTEGER NOT NULL,
-            double_spend_seen    INTEGER NOT NULL,
-            created_at_ms        INTEGER NOT NULL,
-            updated_at_ms        INTEGER NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_submission_watch_status ON submission_watch(status, updated_at_ms);
-
         CREATE TABLE IF NOT EXISTS proposal_blobs (
             escrow_id_hex        TEXT PRIMARY KEY,
             action               TEXT NOT NULL CHECK(action IN ('release', 'refund')),
@@ -756,41 +606,6 @@ fn init_sync(path: &PathBuf) -> Result<()> {
             updated_at_ms        INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_proposal_blobs_hash ON proposal_blobs(txset_hash_hex, updated_at_ms);
-
-        CREATE TABLE IF NOT EXISTS worker_routes (
-            escrow_id_hex        TEXT NOT NULL,
-            role                 TEXT NOT NULL CHECK(role IN ('buyer', 'seller', 'arbiter')),
-            endpoint             TEXT NOT NULL,
-            updated_at_ms        INTEGER NOT NULL,
-            PRIMARY KEY (escrow_id_hex, role)
-        );
-        CREATE INDEX IF NOT EXISTS idx_worker_routes_updated ON worker_routes(updated_at_ms DESC);
-        CREATE TRIGGER IF NOT EXISTS trg_worker_routes_endpoint_collision_insert
-        BEFORE INSERT ON worker_routes
-        FOR EACH ROW
-        WHEN EXISTS (
-            SELECT 1
-            FROM worker_routes
-            WHERE escrow_id_hex = NEW.escrow_id_hex
-              AND endpoint = NEW.endpoint
-              AND role <> NEW.role
-        )
-        BEGIN
-            SELECT RAISE(ABORT, 'worker route endpoint collision across roles');
-        END;
-        CREATE TRIGGER IF NOT EXISTS trg_worker_routes_endpoint_collision_update
-        BEFORE UPDATE OF endpoint, role ON worker_routes
-        FOR EACH ROW
-        WHEN EXISTS (
-            SELECT 1
-            FROM worker_routes
-            WHERE escrow_id_hex = NEW.escrow_id_hex
-              AND endpoint = NEW.endpoint
-              AND role <> NEW.role
-        )
-        BEGIN
-            SELECT RAISE(ABORT, 'worker route endpoint collision across roles');
-        END;
 
         CREATE TABLE IF NOT EXISTS quorum_sign_proofs (
             escrow_id_hex        TEXT NOT NULL,
@@ -1391,114 +1206,6 @@ fn step_count_for_state_sync(
     Ok(u64::try_from(count).unwrap_or(0))
 }
 
-fn upsert_submission_watch_sync(
-    path: &PathBuf,
-    escrow_id_hex: &str,
-    txid: &str,
-    required_confirmations: u64,
-) -> Result<()> {
-    let escrow_id_hex = normalize_hex_exact(escrow_id_hex, 32, "escrow_id_hex")?;
-    let txid = normalize_hex_exact(txid, 64, "txid")?;
-    let required_confirmations = required_confirmations.max(1);
-    let conn = open(path)?;
-    let now = i64::try_from(now_ms()).unwrap_or(i64::MAX);
-    conn.execute(
-        r#"
-        INSERT INTO submission_watch(
-            escrow_id_hex, txid, required_confirmations, status, last_confirmations, double_spend_seen, created_at_ms, updated_at_ms
-        ) VALUES(?1, ?2, ?3, 'pending', 0, 0, ?4, ?5)
-        ON CONFLICT(escrow_id_hex) DO UPDATE SET
-            txid=excluded.txid,
-            required_confirmations=excluded.required_confirmations,
-            status='pending',
-            last_confirmations=0,
-            double_spend_seen=0,
-            updated_at_ms=excluded.updated_at_ms
-        "#,
-        params![
-            escrow_id_hex,
-            txid,
-            i64::try_from(required_confirmations).unwrap_or(i64::MAX),
-            now,
-            now,
-        ],
-    )?;
-    Ok(())
-}
-
-fn get_submission_watch_sync(
-    path: &PathBuf,
-    escrow_id_hex: &str,
-) -> Result<Option<SubmissionWatch>> {
-    let escrow_id_hex = normalize_hex_exact(escrow_id_hex, 32, "escrow_id_hex")?;
-    let conn = open(path)?;
-    conn.query_row(
-        r#"
-        SELECT escrow_id_hex, txid, required_confirmations, status, last_confirmations, double_spend_seen, created_at_ms, updated_at_ms
-        FROM submission_watch
-        WHERE escrow_id_hex=?1
-        "#,
-        params![escrow_id_hex],
-        row_to_submission_watch,
-    )
-    .optional()
-    .map_err(Into::into)
-}
-
-fn list_submission_watches_sync(path: &PathBuf, limit: u32) -> Result<Vec<SubmissionWatch>> {
-    let conn = open(path)?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT escrow_id_hex, txid, required_confirmations, status, last_confirmations, double_spend_seen, created_at_ms, updated_at_ms
-        FROM submission_watch
-        ORDER BY updated_at_ms DESC
-        LIMIT ?1
-        "#,
-    )?;
-    let mut rows = stmt.query(params![i64::from(limit.max(1).min(5000))])?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next()? {
-        out.push(row_to_submission_watch(row)?);
-    }
-    Ok(out)
-}
-
-fn update_submission_watch_progress_sync(
-    path: &PathBuf,
-    escrow_id_hex: &str,
-    status: &str,
-    last_confirmations: u64,
-    double_spend_seen: bool,
-) -> Result<()> {
-    let escrow_id_hex = normalize_hex_exact(escrow_id_hex, 32, "escrow_id_hex")?;
-    let status = normalize_non_empty(status, "status")?;
-    if status != "pending" && status != "confirmed" && status != "failed" {
-        return Err(anyhow!("invalid submission_watch status '{}'", status));
-    }
-    let conn = open(path)?;
-    let n = conn.execute(
-        r#"
-        UPDATE submission_watch
-        SET status=?1, last_confirmations=?2, double_spend_seen=?3, updated_at_ms=?4
-        WHERE escrow_id_hex=?5
-        "#,
-        params![
-            status,
-            i64::try_from(last_confirmations).unwrap_or(i64::MAX),
-            if double_spend_seen { 1i64 } else { 0i64 },
-            i64::try_from(now_ms()).unwrap_or(i64::MAX),
-            escrow_id_hex
-        ],
-    )?;
-    if n == 0 {
-        return Err(anyhow!(
-            "submission_watch not found for escrow_id_hex={}",
-            escrow_id_hex
-        ));
-    }
-    Ok(())
-}
-
 fn get_workflow_sync(path: &PathBuf, escrow_id_hex: &str) -> Result<Option<WorkflowInstance>> {
     let escrow_id_hex = normalize_hex_exact(escrow_id_hex, 32, "escrow_id_hex")?;
     let conn = open(path)?;
@@ -1585,149 +1292,6 @@ fn get_proposal_blob_by_txset_hash_sync(
     )
     .optional()
     .map_err(Into::into)
-}
-
-fn upsert_worker_route_sync(
-    path: &PathBuf,
-    escrow_id_hex: &str,
-    role: &str,
-    endpoint: &str,
-) -> Result<()> {
-    let escrow_id_hex = normalize_hex_exact(escrow_id_hex, 32, "escrow_id_hex")?;
-    let role = normalize_worker_role(role)?;
-    let endpoint = normalize_endpoint(endpoint, "endpoint")?;
-    let mut conn = open(path)?;
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-    let existing_role: Option<String> = tx
-        .query_row(
-            r#"
-            SELECT role
-            FROM worker_routes
-            WHERE escrow_id_hex=?1 AND endpoint=?2 AND role<>?3
-            LIMIT 1
-            "#,
-            params![escrow_id_hex, endpoint, role],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(other_role) = existing_role {
-        return Err(anyhow!(
-            "endpoint '{}' already assigned to role '{}' for escrow {}; each role requires isolated worker endpoint",
-            endpoint,
-            other_role,
-            escrow_id_hex
-        ));
-    }
-
-    tx.execute(
-        r#"
-        INSERT INTO worker_routes(escrow_id_hex, role, endpoint, updated_at_ms)
-        VALUES(?1, ?2, ?3, ?4)
-        ON CONFLICT(escrow_id_hex, role) DO UPDATE SET
-            endpoint=excluded.endpoint,
-            updated_at_ms=excluded.updated_at_ms
-        "#,
-        params![
-            escrow_id_hex,
-            role,
-            endpoint,
-            i64::try_from(now_ms()).unwrap_or(i64::MAX)
-        ],
-    )?;
-    tx.commit()?;
-    Ok(())
-}
-
-fn get_worker_route_sync(
-    path: &PathBuf,
-    escrow_id_hex: &str,
-    role: &str,
-) -> Result<Option<WorkerRoute>> {
-    let escrow_id_hex = normalize_hex_exact(escrow_id_hex, 32, "escrow_id_hex")?;
-    let role = normalize_worker_role(role)?;
-    let conn = open(path)?;
-    conn.query_row(
-        r#"
-        SELECT escrow_id_hex, role, endpoint, updated_at_ms
-        FROM worker_routes
-        WHERE escrow_id_hex=?1 AND role=?2
-        "#,
-        params![escrow_id_hex, role],
-        row_to_worker_route,
-    )
-    .optional()
-    .map_err(Into::into)
-}
-
-fn reconcile_worker_routes_sync(
-    path: &PathBuf,
-    stale_after_ms: u64,
-    include_terminal: bool,
-    limit: u32,
-) -> Result<Vec<WorkerRouteReconcileFinding>> {
-    const REQUIRED_WORKER_ROLES: [&str; 3] = ["buyer", "seller", "arbiter"];
-
-    let conn = open(path)?;
-    let mut stmt = conn.prepare(
-        r#"
-        SELECT escrow_id_hex, state, snapshot_hash_hex, participants_json, created_at_ms, updated_at_ms
-        FROM workflow_instances
-        ORDER BY updated_at_ms DESC
-        LIMIT ?1
-        "#,
-    )?;
-    let mut rows = stmt.query(params![i64::from(limit.max(1).min(5000))])?;
-    let now = now_ms();
-    let mut out = Vec::new();
-
-    while let Some(row) = rows.next()? {
-        let wf = row_to_workflow(row)?;
-        if !include_terminal && is_terminal_workflow_state(wf.state) {
-            continue;
-        }
-        for role in REQUIRED_WORKER_ROLES {
-            let route: Option<WorkerRoute> = conn
-                .query_row(
-                    r#"
-                    SELECT escrow_id_hex, role, endpoint, updated_at_ms
-                    FROM worker_routes
-                    WHERE escrow_id_hex=?1 AND role=?2
-                    "#,
-                    params![&wf.escrow_id_hex, role],
-                    row_to_worker_route,
-                )
-                .optional()?;
-            match route {
-                Some(route) => {
-                    if stale_after_ms > 0 {
-                        let age = now.saturating_sub(route.updated_at_ms);
-                        if age > stale_after_ms {
-                            out.push(WorkerRouteReconcileFinding {
-                                escrow_id_hex: wf.escrow_id_hex.clone(),
-                                workflow_state: wf.state,
-                                role: role.to_string(),
-                                issue: WorkerRouteReconcileIssue::Stale,
-                                endpoint: Some(route.endpoint),
-                                route_updated_at_ms: Some(route.updated_at_ms),
-                                route_age_ms: Some(age),
-                            });
-                        }
-                    }
-                }
-                None => out.push(WorkerRouteReconcileFinding {
-                    escrow_id_hex: wf.escrow_id_hex.clone(),
-                    workflow_state: wf.state,
-                    role: role.to_string(),
-                    issue: WorkerRouteReconcileIssue::Missing,
-                    endpoint: None,
-                    route_updated_at_ms: None,
-                    route_age_ms: None,
-                }),
-            }
-        }
-    }
-    Ok(out)
 }
 
 fn upsert_quorum_sign_proof_sync(
@@ -1919,19 +1483,6 @@ fn row_to_outbox(row: &rusqlite::Row<'_>) -> rusqlite::Result<OutboxItem> {
     })
 }
 
-fn row_to_submission_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<SubmissionWatch> {
-    Ok(SubmissionWatch {
-        escrow_id_hex: row.get(0)?,
-        txid: row.get(1)?,
-        required_confirmations: u64::try_from(row.get::<_, i64>(2)?).unwrap_or(1),
-        status: row.get(3)?,
-        last_confirmations: u64::try_from(row.get::<_, i64>(4)?).unwrap_or(0),
-        double_spend_seen: row.get::<_, i64>(5)? != 0,
-        created_at_ms: u64::try_from(row.get::<_, i64>(6)?).unwrap_or(0),
-        updated_at_ms: u64::try_from(row.get::<_, i64>(7)?).unwrap_or(0),
-    })
-}
-
 fn row_to_proposal_blob(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProposalBlob> {
     Ok(ProposalBlob {
         escrow_id_hex: row.get(0)?,
@@ -1940,15 +1491,6 @@ fn row_to_proposal_blob(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProposalBlo
         txset_hash_hex: row.get(3)?,
         created_at_ms: u64::try_from(row.get::<_, i64>(4)?).unwrap_or(0),
         updated_at_ms: u64::try_from(row.get::<_, i64>(5)?).unwrap_or(0),
-    })
-}
-
-fn row_to_worker_route(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkerRoute> {
-    Ok(WorkerRoute {
-        escrow_id_hex: row.get(0)?,
-        role: row.get(1)?,
-        endpoint: row.get(2)?,
-        updated_at_ms: u64::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
     })
 }
 
@@ -2052,58 +1594,12 @@ fn normalize_quorum_sign_round_for_role(role: &str, sign_round: &str) -> Result<
     Ok(sign_round)
 }
 
-fn normalize_endpoint(value: &str, label: &str) -> Result<String> {
-    let endpoint = normalize_non_empty(value, label)?;
-    let endpoint = endpoint.trim_end_matches('/').to_string();
-    if endpoint.is_empty() {
-        return Err(anyhow!("{label} must not be empty"));
-    }
-    let parsed = Url::parse(&endpoint).map_err(|e| anyhow!("{label} invalid URL: {e}"))?;
-    match parsed.scheme() {
-        "http" | "https" => {}
-        other => {
-            return Err(anyhow!(
-                "{label} must use http|https scheme (got '{other}')"
-            ));
-        }
-    }
-    if parsed.host_str().is_none() {
-        return Err(anyhow!("{label} missing host"));
-    }
-    let path = parsed
-        .path()
-        .trim()
-        .trim_end_matches('/')
-        .to_ascii_lowercase();
-    if path == "/json_rpc" || path.ends_with("/json_rpc") {
-        return Err(anyhow!(
-            "{label} must point to worker API base endpoint, not wallet-rpc /json_rpc"
-        ));
-    }
-    if let Some(port) = parsed.port_or_known_default() {
-        const RESERVED_WALLET_RPC_PORTS: [u16; 5] = [18088, 28088, 38088, 38083, 38084];
-        if RESERVED_WALLET_RPC_PORTS.contains(&port) {
-            return Err(anyhow!(
-                "{label} uses reserved wallet-rpc port {port}; worker routes must target signer worker API endpoints"
-            ));
-        }
-    }
-    Ok(endpoint)
-}
-
 fn normalize_jti(value: &str, label: &str) -> Result<String> {
     let v = normalize_non_empty(value, label)?;
     if v.len() > 256 {
         return Err(anyhow!("{label} too long (max 256 chars)"));
     }
     Ok(v)
-}
-
-fn is_terminal_workflow_state(state: WorkflowState) -> bool {
-    matches!(
-        state,
-        WorkflowState::Confirmed | WorkflowState::FailedDeadLetter
-    )
 }
 
 fn workflow_allows_quorum_proof_state(state: WorkflowState) -> bool {
@@ -2280,78 +1776,6 @@ fn integrity_check_sync(path: &PathBuf, limit: u32) -> Result<Vec<IntegrityFindi
     }
 
     {
-        let mut endpoint_roles = BTreeMap::<(String, String), BTreeSet<String>>::new();
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT escrow_id_hex, role, endpoint
-            FROM worker_routes
-            ORDER BY updated_at_ms DESC
-            "#,
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let escrow_id_hex: String = row.get(0)?;
-            let role: String = row.get(1)?;
-            let endpoint: String = row.get(2)?;
-            let role_norm = normalize_worker_role(&role);
-            let endpoint_norm = normalize_endpoint(&endpoint, "endpoint");
-            if !workflow_ids.contains(&escrow_id_hex) {
-                push_integrity_finding(
-                    &mut findings,
-                    limit,
-                    "worker_routes",
-                    Some(&escrow_id_hex),
-                    "orphan_workflow",
-                    format!("worker route role '{}' has no matching workflow", role),
-                );
-            }
-            if role_norm.is_err() {
-                push_integrity_finding(
-                    &mut findings,
-                    limit,
-                    "worker_routes",
-                    Some(&escrow_id_hex),
-                    "invalid_role",
-                    "role must be buyer|seller|arbiter",
-                );
-            }
-            if endpoint_norm.is_err() {
-                push_integrity_finding(
-                    &mut findings,
-                    limit,
-                    "worker_routes",
-                    Some(&escrow_id_hex),
-                    "invalid_endpoint",
-                    "endpoint is empty or malformed",
-                );
-            }
-            if let (Ok(role_norm), Ok(endpoint_norm)) = (role_norm, endpoint_norm) {
-                endpoint_roles
-                    .entry((escrow_id_hex.clone(), endpoint_norm))
-                    .or_default()
-                    .insert(role_norm);
-            }
-        }
-
-        for ((escrow_id_hex, endpoint), roles) in endpoint_roles {
-            if roles.len() > 1 {
-                let roles_joined = roles.into_iter().collect::<Vec<_>>().join(",");
-                push_integrity_finding(
-                    &mut findings,
-                    limit,
-                    "worker_routes",
-                    Some(&escrow_id_hex),
-                    "endpoint_role_collision",
-                    format!(
-                        "roles [{}] share endpoint '{}'; each role should use isolated sandbox worker endpoint",
-                        roles_joined, endpoint
-                    ),
-                );
-            }
-        }
-    }
-
-    {
         let mut stmt = conn.prepare(
             r#"
             SELECT escrow_id_hex, role, sign_round, txset_hash_hex, jti, req_id
@@ -2433,70 +1857,6 @@ fn integrity_check_sync(path: &PathBuf, limit: u32) -> Result<Vec<IntegrityFindi
                     Some(&escrow_id_hex),
                     "invalid_req_id",
                     "req_id is not 64 hex chars",
-                );
-            }
-        }
-    }
-
-    {
-        let mut stmt = conn.prepare(
-            r#"
-            SELECT escrow_id_hex, txid, required_confirmations, status, last_confirmations
-            FROM submission_watch
-            ORDER BY updated_at_ms DESC
-            "#,
-        )?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let escrow_id_hex: String = row.get(0)?;
-            let txid: String = row.get(1)?;
-            let required_confirmations = u64::try_from(row.get::<_, i64>(2)?).unwrap_or(0);
-            let status: String = row.get(3)?;
-            let last_confirmations = u64::try_from(row.get::<_, i64>(4)?).unwrap_or(0);
-            if !workflow_ids.contains(&escrow_id_hex) {
-                push_integrity_finding(
-                    &mut findings,
-                    limit,
-                    "submission_watch",
-                    Some(&escrow_id_hex),
-                    "orphan_workflow",
-                    "submission_watch row has no matching workflow",
-                );
-            }
-            if normalize_hex_exact(&txid, 64, "txid").is_err() {
-                push_integrity_finding(
-                    &mut findings,
-                    limit,
-                    "submission_watch",
-                    Some(&escrow_id_hex),
-                    "invalid_txid",
-                    "txid is not 64 hex chars",
-                );
-            }
-            if required_confirmations == 0 {
-                push_integrity_finding(
-                    &mut findings,
-                    limit,
-                    "submission_watch",
-                    Some(&escrow_id_hex),
-                    "invalid_required_confirmations",
-                    "required_confirmations must be > 0",
-                );
-            }
-            if status == "confirmed"
-                && required_confirmations > 0
-                && last_confirmations < required_confirmations
-            {
-                push_integrity_finding(
-                    &mut findings,
-                    limit,
-                    "submission_watch",
-                    Some(&escrow_id_hex),
-                    "confirmed_below_threshold",
-                    format!(
-                        "confirmed status with last_confirmations={} below required={}",
-                        last_confirmations, required_confirmations
-                    ),
                 );
             }
         }
@@ -2785,23 +2145,6 @@ fn slo_metrics_sync(
         |row| row.get::<_, i64>(0),
     )?)
     .unwrap_or(0);
-    let wallet_rpc_failure_window = u64::try_from(conn.query_row(
-        r#"
-            SELECT COUNT(1)
-            FROM dead_letters
-            WHERE created_at_ms >= ?1
-              AND (
-                lower(stage) LIKE '%wallet%'
-                OR lower(last_error_code) LIKE '%wallet%'
-                OR lower(last_error_detail_redacted) LIKE '%wallet-rpc%'
-                OR lower(last_error_detail_redacted) LIKE '%wallet rpc%'
-              )
-            "#,
-        params![since_i64],
-        |row| row.get::<_, i64>(0),
-    )?)
-    .unwrap_or(0);
-
     Ok(WorkflowSloMetrics {
         generated_at_ms: now,
         window_ms,
@@ -2817,7 +2160,6 @@ fn slo_metrics_sync(
         outbox_retrying,
         step_replay_duplicate_window,
         dead_letter_window,
-        wallet_rpc_failure_window,
         stage_latency,
     })
 }
@@ -2884,16 +2226,6 @@ fn build_slo_alert_report(
             action: "investigate replay spikes (network retries or abuse patterns)".to_string(),
         });
     }
-    if metrics.wallet_rpc_failure_window > thresholds.wallet_rpc_failure_window_total {
-        alerts.push(SloAlertItem {
-            metric: "wallet_rpc_failure_window_total".to_string(),
-            observed: metrics.wallet_rpc_failure_window,
-            threshold: thresholds.wallet_rpc_failure_window_total,
-            severity: "high".to_string(),
-            action: "check wallet-rpc health and credentials before continuing submits".to_string(),
-        });
-    }
-
     SloAlertReport {
         generated_at_ms: now_ms(),
         metrics,
@@ -3270,44 +2602,6 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 
-    #[tokio::test]
-    async fn submission_watch_roundtrip_and_progress_update() {
-        let db_path = unique_db_path("submission_watch");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-        db.upsert_submission_watch(
-            "00112233445566778899aabbccddeeff",
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            12,
-        )
-        .await
-        .expect("upsert");
-        let watch = db
-            .get_submission_watch("00112233445566778899aabbccddeeff")
-            .await
-            .expect("get")
-            .expect("exists");
-        assert_eq!(watch.status, "pending");
-        assert_eq!(watch.required_confirmations, 12);
-
-        db.update_submission_watch_progress(
-            "00112233445566778899aabbccddeeff",
-            "confirmed",
-            12,
-            false,
-        )
-        .await
-        .expect("update");
-        let updated = db
-            .get_submission_watch("00112233445566778899aabbccddeeff")
-            .await
-            .expect("get2")
-            .expect("exists2");
-        assert_eq!(updated.status, "confirmed");
-        assert_eq!(updated.last_confirmations, 12);
-        let _ = std::fs::remove_file(db_path);
-    }
-
     async fn transition_to_funded(db: &OrchestratorDb, escrow_id_hex: &str) {
         let path = [
             WorkflowState::PrepareCollected,
@@ -3392,241 +2686,6 @@ mod tests {
             err.to_string()
                 .contains("does not allow proposal blob storage")
         );
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn worker_route_roundtrip() {
-        let db_path = unique_db_path("worker_route");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-        db.upsert_worker_route(
-            "00112233445566778899aabbccddeeff",
-            "seller",
-            "http://127.0.0.1:28090/",
-        )
-        .await
-        .expect("upsert route");
-        let route = db
-            .get_worker_route("00112233445566778899aabbccddeeff", "seller")
-            .await
-            .expect("get route")
-            .expect("route exists");
-        assert_eq!(route.role, "seller");
-        assert_eq!(route.endpoint, "http://127.0.0.1:28090");
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn worker_route_rejects_invalid_role() {
-        let db_path = unique_db_path("worker_route_invalid_role");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-        let err = db
-            .upsert_worker_route(
-                "00112233445566778899aabbccddeeff",
-                "not_a_role",
-                "http://127.0.0.1:28090",
-            )
-            .await
-            .expect_err("invalid role should fail");
-        assert!(err.to_string().contains("role must be one of"));
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn worker_route_rejects_wallet_rpc_like_endpoint() {
-        let db_path = unique_db_path("worker_route_wallet_rpc_like_endpoint");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-
-        let err = db
-            .upsert_worker_route(
-                "00112233445566778899aabbccddeeff",
-                "seller",
-                "http://127.0.0.1:18088/json_rpc",
-            )
-            .await
-            .expect_err("wallet-rpc endpoint must be rejected");
-        assert!(err.to_string().contains("wallet-rpc"));
-
-        let err = db
-            .upsert_worker_route(
-                "00112233445566778899aabbccddeeff",
-                "seller",
-                "http://127.0.0.1:38083",
-            )
-            .await
-            .expect_err("reserved wallet-rpc port must be rejected");
-        assert!(err.to_string().contains("reserved wallet-rpc port"));
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn worker_route_rejects_endpoint_collision_between_roles() {
-        let db_path = unique_db_path("worker_route_endpoint_collision");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-        let escrow_id_hex = "00112233445566778899aabbccddeeff";
-
-        db.upsert_worker_route(escrow_id_hex, "seller", "http://127.0.0.1:28090")
-            .await
-            .expect("seller route");
-        let err = db
-            .upsert_worker_route(escrow_id_hex, "arbiter", "http://127.0.0.1:28090")
-            .await
-            .expect_err("endpoint collision must fail");
-        assert!(
-            err.to_string()
-                .contains("each role requires isolated worker endpoint")
-        );
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn worker_route_trigger_blocks_direct_sql_collision_insert() {
-        let db_path = unique_db_path("worker_route_trigger_collision_insert");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-        let escrow_id_hex = "00112233445566778899aabbccddeeff";
-        db.upsert_worker_route(escrow_id_hex, "seller", "http://127.0.0.1:28090")
-            .await
-            .expect("seller route");
-
-        let conn = open(&db_path).expect("open db");
-        let err = conn
-            .execute(
-                r#"
-                INSERT INTO worker_routes(escrow_id_hex, role, endpoint, updated_at_ms)
-                VALUES(?1, ?2, ?3, ?4)
-                "#,
-                params![
-                    escrow_id_hex,
-                    "arbiter",
-                    "http://127.0.0.1:28090",
-                    i64::try_from(now_ms()).unwrap_or(i64::MAX)
-                ],
-            )
-            .expect_err("trigger must block direct SQL collision");
-        assert!(err.to_string().contains("endpoint collision"));
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn worker_route_reconcile_detects_missing_roles() {
-        let db_path = unique_db_path("worker_route_reconcile_missing");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-        let escrow_id_hex = "00112233445566778899aabbccddeeff";
-        db.create_workflow(
-            escrow_id_hex,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            &[
-                "alice".to_string(),
-                "bob".to_string(),
-                "arbiter".to_string(),
-            ],
-        )
-        .await
-        .expect("create");
-
-        let findings = db
-            .reconcile_worker_routes(0, false, 100)
-            .await
-            .expect("reconcile");
-        assert_eq!(findings.len(), 3);
-        assert!(
-            findings
-                .iter()
-                .all(|f| f.issue == WorkerRouteReconcileIssue::Missing)
-        );
-        let mut roles = findings.iter().map(|f| f.role.clone()).collect::<Vec<_>>();
-        roles.sort();
-        assert_eq!(roles, vec!["arbiter", "buyer", "seller"]);
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn worker_route_reconcile_detects_stale_route() {
-        let db_path = unique_db_path("worker_route_reconcile_stale");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-        let escrow_id_hex = "00112233445566778899aabbccddeeff";
-        db.create_workflow(
-            escrow_id_hex,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            &[
-                "alice".to_string(),
-                "bob".to_string(),
-                "arbiter".to_string(),
-            ],
-        )
-        .await
-        .expect("create");
-        db.upsert_worker_route(escrow_id_hex, "buyer", "http://127.0.0.1:28081")
-            .await
-            .expect("buyer route");
-        db.upsert_worker_route(escrow_id_hex, "seller", "http://127.0.0.1:28082")
-            .await
-            .expect("seller route");
-        db.upsert_worker_route(escrow_id_hex, "arbiter", "http://127.0.0.1:28083")
-            .await
-            .expect("arbiter route");
-
-        let conn = open(&db_path).expect("open");
-        conn.execute(
-            "UPDATE worker_routes SET updated_at_ms=1 WHERE escrow_id_hex=?1 AND role='seller'",
-            params![escrow_id_hex],
-        )
-        .expect("force stale");
-
-        let stale_after_ms = 60_000;
-        let findings = db
-            .reconcile_worker_routes(stale_after_ms, false, 100)
-            .await
-            .expect("reconcile");
-        assert_eq!(findings.len(), 1);
-        let finding = &findings[0];
-        assert_eq!(finding.role, "seller");
-        assert_eq!(finding.issue, WorkerRouteReconcileIssue::Stale);
-        assert!(finding.route_age_ms.unwrap_or(0) > stale_after_ms);
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
-    async fn worker_route_reconcile_ok_when_all_routes_fresh() {
-        let db_path = unique_db_path("worker_route_reconcile_fresh");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-        let escrow_id_hex = "00112233445566778899aabbccddeeff";
-        db.create_workflow(
-            escrow_id_hex,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            &[
-                "alice".to_string(),
-                "bob".to_string(),
-                "arbiter".to_string(),
-            ],
-        )
-        .await
-        .expect("create");
-        db.upsert_worker_route(escrow_id_hex, "buyer", "http://127.0.0.1:28081")
-            .await
-            .expect("buyer route");
-        db.upsert_worker_route(escrow_id_hex, "seller", "http://127.0.0.1:28082")
-            .await
-            .expect("seller route");
-        db.upsert_worker_route(escrow_id_hex, "arbiter", "http://127.0.0.1:28083")
-            .await
-            .expect("arbiter route");
-
-        let findings = db
-            .reconcile_worker_routes(u64::MAX, false, 100)
-            .await
-            .expect("reconcile");
-        assert!(findings.is_empty());
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -3936,68 +2995,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn integrity_check_reports_worker_route_endpoint_role_collision() {
-        let db_path = unique_db_path("integrity_check_worker_route_collision");
-        let db = OrchestratorDb::new(db_path.clone());
-        db.init().await.expect("init");
-
-        db.create_workflow(
-            "00112233445566778899aabbccddeeff",
-            &"11".repeat(32),
-            &[
-                "buyer".to_string(),
-                "seller".to_string(),
-                "arbiter".to_string(),
-            ],
-        )
-        .await
-        .expect("workflow");
-
-        db.upsert_worker_route(
-            "00112233445566778899aabbccddeeff",
-            "seller",
-            "http://127.0.0.1:28090",
-        )
-        .await
-        .expect("seller route");
-        // Inject a legacy/broken row bypassing upsert validation to ensure integrity check
-        // still detects collisions in pre-existing databases.
-        let conn = open(&db_path).expect("open db");
-        conn.execute(
-            "DROP TRIGGER IF EXISTS trg_worker_routes_endpoint_collision_insert",
-            [],
-        )
-        .expect("drop insert trigger");
-        conn.execute(
-            "DROP TRIGGER IF EXISTS trg_worker_routes_endpoint_collision_update",
-            [],
-        )
-        .expect("drop update trigger");
-        conn.execute(
-            r#"
-            INSERT INTO worker_routes(escrow_id_hex, role, endpoint, updated_at_ms)
-            VALUES(?1, ?2, ?3, ?4)
-            "#,
-            params![
-                "00112233445566778899aabbccddeeff",
-                "arbiter",
-                "http://127.0.0.1:28090",
-                i64::try_from(now_ms()).unwrap_or(i64::MAX)
-            ],
-        )
-        .expect("inject colliding route");
-
-        let findings = db.check_integrity(50).await.expect("integrity");
-        assert!(findings.iter().any(|f| {
-            f.table == "worker_routes"
-                && f.issue == "endpoint_role_collision"
-                && f.escrow_id_hex.as_deref() == Some("00112233445566778899aabbccddeeff")
-        }));
-
-        let _ = std::fs::remove_file(db_path);
-    }
-
-    #[tokio::test]
     async fn slo_metrics_and_alerts_capture_operational_pressure() {
         let db_path = unique_db_path("slo_metrics");
         let db = OrchestratorDb::new(db_path.clone());
@@ -4153,7 +3150,6 @@ mod tests {
         assert_eq!(metrics.outbox_retrying, 1);
         assert_eq!(metrics.step_replay_duplicate_window, 1);
         assert_eq!(metrics.dead_letter_window, 2);
-        assert_eq!(metrics.wallet_rpc_failure_window, 1);
         assert!(metrics.stage_latency.contains_key("new"));
 
         let report = db
@@ -4173,13 +3169,6 @@ mod tests {
                 .iter()
                 .any(|a| a.metric == "dead_letter_window_total")
         );
-        assert!(
-            report
-                .alerts
-                .iter()
-                .any(|a| a.metric == "wallet_rpc_failure_window_total")
-        );
-
         let _ = std::fs::remove_file(db_path);
     }
 }

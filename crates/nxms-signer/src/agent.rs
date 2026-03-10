@@ -120,6 +120,10 @@ impl SignerAgent {
         })
     }
 
+    pub fn worker_service_token(&self) -> Option<&str> {
+        self.cfg.worker_service_token.as_deref()
+    }
+
     async fn mailbox_pull_with_retry(&self) -> Result<nxms_mailbox_client::PullResponse> {
         let attempts = self.cfg.mailbox_retry_attempts.max(1);
         let base_backoff_ms = self.cfg.mailbox_retry_backoff_ms.max(50);

@@ -580,7 +580,7 @@ fn harden_sqlite_permissions(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent()
         && parent.exists()
     {
-        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+        maybe_harden_parent_dir_permissions(parent)?;
     }
     for p in [
         path.to_path_buf(),
@@ -591,6 +591,27 @@ fn harden_sqlite_permissions(path: &Path) -> Result<()> {
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600))?;
         }
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn maybe_harden_parent_dir_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let meta = std::fs::metadata(path)?;
+    let mode = meta.permissions().mode() & 0o7777;
+
+    // Do not mutate shared sticky directories like /tmp.
+    if (mode & 0o1000) != 0 {
+        return Ok(());
+    }
+
+    // Only harden directories owned by the current effective user.
+    if meta.uid() != unsafe { libc::geteuid() } {
+        return Ok(());
+    }
+
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 

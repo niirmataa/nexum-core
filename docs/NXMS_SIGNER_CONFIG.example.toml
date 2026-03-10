@@ -10,6 +10,7 @@ db_path = "/var/lib/nxms-signer/signer.db"
 mailbox_url = "http://exampleonionaddress.onion"
 mailbox_token = "vault:/run/secrets/nxms/mailbox_token"
 mailbox_admin_token = "vault:/run/secrets/nxms/mailbox_admin_token"
+worker_service_token = "vault:/run/secrets/nxms/worker_service_token"
 tor_socks5h = "socks5h://127.0.0.1:9050"
 allow_remote_wallet_rpc = false # keep false in production
 production_hardening = true

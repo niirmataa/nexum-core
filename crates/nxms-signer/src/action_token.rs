@@ -565,6 +565,7 @@ mod tests {
             mailbox_url: "http://mailbox".to_string(),
             mailbox_token: None,
             mailbox_admin_token: None,
+            worker_service_token: Some("service-token-123456".to_string()),
             tor_socks5h: None,
             mailbox_retry_attempts: 3,
             mailbox_retry_backoff_ms: 250,

@@ -1,6 +1,6 @@
 # NXMS Mailbox + Signer Runbook
 
-Last update: 2026-02-18
+Last update: 2026-03-10
 
 ## Topology (recommended)
 - Host A: `nxms-mailbox` only.
@@ -55,16 +55,22 @@ Last update: 2026-02-18
 ## Mailbox Hardening
 1. Bind mailbox to localhost only:
 `NXMS_MAILBOX_BIND=127.0.0.1:4010`
-2. Use bearer token for API and a separate admin token:
-`NXMS_MAILBOX_TOKEN=...`
+2. Use separate bearer tokens for push/admin and scoped token maps for pull/ack:
+`NXMS_MAILBOX_PUSH_TOKEN=...`
+`NXMS_MAILBOX_PULL_TOKENS=buyer=...,seller=...,arbiter=...`
+`NXMS_MAILBOX_ACK_TOKENS=buyer=...,seller=...,arbiter=...`
 `NXMS_MAILBOX_ADMIN_TOKEN=...`
-3. Enforce quotas/rate limits:
+3. `pull` and `ack` are fail-closed per inbox scope:
+- a token for one inbox must not authorize another inbox,
+- `ack` must delete only `(receipt, to_id)` for the authorized inbox,
+- do not reuse the same token value across inbox scopes.
+4. Enforce quotas/rate limits:
 - `NXMS_MAILBOX_MAX_MESSAGES_PER_INBOX`
 - `NXMS_MAILBOX_MAX_BYTES_PER_INBOX`
 - `NXMS_MAILBOX_MAX_ROWS_GLOBAL`
 - `NXMS_MAILBOX_RATE_LIMIT_IP_PER_MIN`
 - `NXMS_MAILBOX_RATE_LIMIT_TO_PER_MIN`
-4. Keep periodic cleanup + checkpoint enabled:
+5. Keep periodic cleanup + checkpoint enabled:
 - `NXMS_MAILBOX_CLEANUP_SECS`
 - `NXMS_MAILBOX_CHECKPOINT_SECS`
 
@@ -83,7 +89,7 @@ Preferred: enable client authorization (v3 auth) so only known clients can conne
 Minimum required fields:
 - `local_id`, `peers_path`, `keys_path`, `db_path`
 - `signer_role`, `sandbox_id`, `wallet_id`, `nettype`
-- `mailbox_url`, optional `mailbox_token`, optional `tor_socks5h`
+- `mailbox_url`, `mailbox_token`, `worker_service_token`, `tor_socks5h`
 - `allow_remote_wallet_rpc=false` (recommended; loopback-only wallet-rpc endpoint)
 - `production_hardening=true` (recommended in production)
 - `[wallet_rpc]`: endpoint + wallet credentials + digest auth credentials
@@ -96,6 +102,7 @@ Action token `snapshot_hash` must be canonical snapshot JSON hash:
 Secrets can be referenced as `vault:/path/to/secret`, `file:/path/to/secret`, or `env:VAR_NAME`.
 When `production_hardening=true`, `vault:` refs are mandatory for:
 - `mailbox_token` (and `mailbox_admin_token` if set),
+- `worker_service_token`,
 - `wallet_rpc.wallet_password`,
 - `wallet_rpc.password`.
 Signer provisioning flow (`wallet_provision.enabled=true`) runs server-side CLI:
@@ -146,6 +153,7 @@ Cross-sandbox quorum proof bridge (signer <-> orchestrator):
 ## Worker API Workflow (capability mode)
 - Run local worker API:
 `nxms-signer serve --config nxms-signer.toml --bind 127.0.0.1:28090`
+- Worker API is loopback-only; non-loopback bind is rejected.
 - Health check:
 `curl -sS http://127.0.0.1:28090/healthz`
 - Sign endpoint:
@@ -154,7 +162,10 @@ Cross-sandbox quorum proof bridge (signer <-> orchestrator):
 `POST /v1/submit_multisig`
 - Proposal endpoint (arbiter sandbox source of txset):
 `POST /v1/propose_multisig`
-- Token transport:
+- Service auth:
+  - every `/v1/*` call requires `X-NXMS-Service-Authorization: Bearer <worker_service_token>`
+- Action token transport:
+  - `sign_multisig` and `submit_multisig` still require business auth via action token
   - preferred: `Authorization: Bearer <action_token>`
   - fallback: JSON field `action_token`
 - Request body (sign/submit):

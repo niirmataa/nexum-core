@@ -4,7 +4,7 @@ use crate::db::{SecurityAlertThresholds, SecurityDashboard};
 use anyhow::{Result, anyhow};
 use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::header::AUTHORIZATION;
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderName, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -13,14 +13,15 @@ use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::info;
 
 const WORKER_HTTP_MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
-const ENV_ALLOW_REMOTE_BIND: &str = "NXMS_SIGNER_ALLOW_REMOTE_BIND";
+const SERVICE_AUTH_HEADER: &str = "x-nxms-service-authorization";
 
 #[derive(Clone)]
 struct WorkerState {
     agent: Arc<SignerAgent>,
+    service_token: Arc<String>,
     // Wallet RPC is stateful and shared per wallet; serialize critical operations.
     op_lock: Arc<Mutex<()>>,
 }
@@ -101,9 +102,14 @@ struct AuditAlertsQuery {
 
 pub async fn serve(agent: SignerAgent, bind: &str) -> Result<()> {
     enforce_bind_policy(bind)?;
+    let service_token = agent
+        .worker_service_token()
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("worker_service_token must be configured"))?;
 
     let state = WorkerState {
         agent: Arc::new(agent),
+        service_token: Arc::new(service_token),
         op_lock: Arc::new(Mutex::new(())),
     };
 
@@ -127,18 +133,6 @@ pub async fn serve(agent: SignerAgent, bind: &str) -> Result<()> {
         .map_err(|e| anyhow!("worker API server error: {}", e))
 }
 
-fn env_true(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
-}
-
 fn bind_is_loopback(bind: &str) -> Result<bool> {
     let addr: SocketAddr = bind
         .parse()
@@ -150,22 +144,12 @@ fn bind_is_loopback(bind: &str) -> Result<bool> {
 }
 
 fn enforce_bind_policy(bind: &str) -> Result<()> {
-    let loopback = bind_is_loopback(bind)?;
-    if loopback {
-        return Ok(());
-    }
-    if env_true(ENV_ALLOW_REMOTE_BIND) {
-        warn!(
-            bind = %bind,
-            env = ENV_ALLOW_REMOTE_BIND,
-            "remote worker bind enabled via break-glass override"
-        );
+    if bind_is_loopback(bind)? {
         return Ok(());
     }
     Err(anyhow!(
-        "worker bind '{}' rejected: loopback required by default; set {}=true only for controlled break-glass scenarios",
-        bind,
-        ENV_ALLOW_REMOTE_BIND
+        "worker bind '{}' rejected: loopback-only bind is required",
+        bind
     ))
 }
 
@@ -173,7 +157,10 @@ async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, Json(HealthResponse { ok: true }))
 }
 
-async fn audit_metrics(State(state): State<WorkerState>) -> impl IntoResponse {
+async fn audit_metrics(State(state): State<WorkerState>, headers: HeaderMap) -> impl IntoResponse {
+    if let Err(resp) = require_service_auth(&headers, state.service_token.as_str()) {
+        return resp;
+    }
     match state.agent.security_dashboard().await {
         Ok(v) => {
             let dashboard: SecurityDashboard = v;
@@ -185,8 +172,12 @@ async fn audit_metrics(State(state): State<WorkerState>) -> impl IntoResponse {
 
 async fn audit_alerts(
     State(state): State<WorkerState>,
+    headers: HeaderMap,
     Query(q): Query<AuditAlertsQuery>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_service_auth(&headers, state.service_token.as_str()) {
+        return resp;
+    }
     let window_ms = q.window_secs.unwrap_or(300).max(1).saturating_mul(1000);
     let thresholds = SecurityAlertThresholds {
         token_reject_total: q.token_reject_total.unwrap_or(5).max(1),
@@ -210,6 +201,9 @@ async fn sign_multisig(
     headers: HeaderMap,
     Json(req): Json<SignMultisigRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_service_auth(&headers, state.service_token.as_str()) {
+        return resp;
+    }
     let action = match parse_action(&req.action) {
         Ok(v) => v,
         Err(err) => {
@@ -255,8 +249,12 @@ async fn sign_multisig(
 
 async fn propose_multisig(
     State(state): State<WorkerState>,
+    headers: HeaderMap,
     Json(req): Json<ProposeMultisigRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_service_auth(&headers, state.service_token.as_str()) {
+        return resp;
+    }
     let action = match parse_action(&req.action) {
         Ok(v) => v,
         Err(err) => {
@@ -293,6 +291,9 @@ async fn submit_multisig(
     headers: HeaderMap,
     Json(req): Json<SubmitMultisigRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_service_auth(&headers, state.service_token.as_str()) {
+        return resp;
+    }
     let action = match parse_action(&req.action) {
         Ok(v) => v,
         Err(err) => {
@@ -335,8 +336,12 @@ async fn submit_multisig(
 
 async fn auth_event(
     State(state): State<WorkerState>,
+    headers: HeaderMap,
     Json(req): Json<AuthAuditEventRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) = require_service_auth(&headers, state.service_token.as_str()) {
+        return resp;
+    }
     let context = AuthEventContext {
         op: req.op.clone(),
         txset_hash_hex: req.txset_hash_hex.clone(),
@@ -373,6 +378,73 @@ fn parse_action(raw: &str) -> Result<EscrowAction> {
         "refund" => Ok(EscrowAction::Refund),
         _ => Err(anyhow!("action must be one of: release|refund")),
     }
+}
+
+fn bearer_token_from_service_headers(
+    headers: &HeaderMap,
+) -> std::result::Result<Option<String>, (StatusCode, String)> {
+    let header_name = HeaderName::from_static(SERVICE_AUTH_HEADER);
+    let Some(raw) = headers.get(header_name) else {
+        return Ok(None);
+    };
+    let raw = raw.to_str().map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            "invalid service auth header".to_string(),
+        )
+    })?;
+    let (scheme, token) = raw.split_once(' ').ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            "bad service auth header format".to_string(),
+        )
+    })?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "service auth scheme must be Bearer".to_string(),
+        ));
+    }
+    let token = token.trim();
+    if token.is_empty() {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "empty service bearer token".to_string(),
+        ));
+    }
+    Ok(Some(token.to_string()))
+}
+
+fn require_service_auth(
+    headers: &HeaderMap,
+    expected_token: &str,
+) -> std::result::Result<(), axum::response::Response> {
+    let token = match bearer_token_from_service_headers(headers) {
+        Ok(Some(token)) => token,
+        Ok(None) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "missing service auth header".to_string(),
+                }),
+            )
+                .into_response());
+        }
+        Err((status, msg)) => {
+            return Err((status, Json(ErrorResponse { error: msg })).into_response());
+        }
+    };
+
+    if token != expected_token {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "unauthorized service caller".to_string(),
+            }),
+        )
+            .into_response());
+    }
+    Ok(())
 }
 
 fn resolve_action_token(
@@ -494,6 +566,34 @@ mod tests {
     #[test]
     fn bind_policy_rejects_non_loopback_without_override() {
         let err = enforce_bind_policy("0.0.0.0:28090").expect_err("must reject remote bind");
-        assert!(err.to_string().contains("loopback required"));
+        assert!(err.to_string().contains("loopback-only"));
+    }
+
+    #[test]
+    fn service_auth_rejects_missing_bearer() {
+        let err = require_service_auth(&HeaderMap::new(), "service-token-123456")
+            .expect_err("missing auth");
+        assert_eq!(err.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn service_auth_rejects_wrong_bearer() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(SERVICE_AUTH_HEADER),
+            HeaderValue::from_static("Bearer wrong-token"),
+        );
+        let err = require_service_auth(&headers, "service-token-123456").expect_err("wrong auth");
+        assert_eq!(err.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn service_auth_accepts_matching_bearer() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static(SERVICE_AUTH_HEADER),
+            HeaderValue::from_static("Bearer service-token-123456"),
+        );
+        require_service_auth(&headers, "service-token-123456").expect("service auth");
     }
 }

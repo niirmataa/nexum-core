@@ -17,7 +17,9 @@ const AUTH_HEADER_COMPARE_MAX_LEN: usize = 1024;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ApiConfig {
-    pub token: Option<String>,
+    pub push_token: Option<String>,
+    pub pull_token: Option<String>,
+    pub ack_token: Option<String>,
     pub admin_token: Option<String>,
     pub max_body_bytes: usize,
     pub default_ttl_secs: u64,
@@ -151,7 +153,7 @@ pub(crate) async fn push(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<PushResponse>, ApiError> {
-    require_auth(&state.cfg, &headers)?;
+    require_push_auth(&state.cfg, &headers)?;
     let max_body_bytes = state.cfg.max_body_bytes.max(1);
     if let Some(raw_len) = headers.get(CONTENT_LENGTH)
         && let Ok(raw_len) = raw_len.to_str()
@@ -213,7 +215,7 @@ pub(crate) async fn pull(
     headers: HeaderMap,
     Json(req): Json<PullRequest>,
 ) -> Result<Json<PullResponse>, ApiError> {
-    require_auth(&state.cfg, &headers)?;
+    require_pull_auth(&state.cfg, &headers)?;
 
     validate_peer_id(&req.to)
         .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("invalid to: {e}")))?;
@@ -266,7 +268,7 @@ pub(crate) async fn ack(
     headers: HeaderMap,
     Json(req): Json<AckRequest>,
 ) -> Result<Json<AckResponse>, ApiError> {
-    require_auth(&state.cfg, &headers)?;
+    require_ack_auth(&state.cfg, &headers)?;
 
     let receipt = req.receipt.trim();
     if receipt.is_empty() {
@@ -317,9 +319,16 @@ pub(crate) async fn admin_stats(
     }))
 }
 
-fn require_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
-    let Some(token) = cfg.token.as_deref() else {
-        return Ok(());
+fn require_bearer(
+    token: Option<&str>,
+    headers: &HeaderMap,
+    missing_detail: &'static str,
+) -> Result<(), ApiError> {
+    let Some(token) = token else {
+        return Err(ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            missing_detail,
+        ));
     };
 
     let auth = headers
@@ -333,23 +342,36 @@ fn require_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn require_admin_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
-    let Some(token) = cfg.admin_token.as_deref() else {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "admin endpoint disabled",
-        ));
-    };
+fn require_push_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
+    require_bearer(
+        cfg.push_token.as_deref(),
+        headers,
+        "push auth is not configured",
+    )
+}
 
-    let auth = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default();
-    let want = format!("Bearer {}", token);
-    if !timing_safe_eq_fixed::<AUTH_HEADER_COMPARE_MAX_LEN>(auth, &want) {
-        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized"));
-    }
-    Ok(())
+fn require_pull_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
+    require_bearer(
+        cfg.pull_token.as_deref(),
+        headers,
+        "pull auth is not configured",
+    )
+}
+
+fn require_ack_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
+    require_bearer(
+        cfg.ack_token.as_deref(),
+        headers,
+        "ack auth is not configured",
+    )
+}
+
+fn require_admin_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
+    require_bearer(
+        cfg.admin_token.as_deref(),
+        headers,
+        "admin auth is not configured",
+    )
 }
 
 fn enforce_push_rate_limits(
@@ -478,7 +500,9 @@ mod tests {
         AppState {
             db,
             cfg: ApiConfig {
-                token: None,
+                push_token: Some("push-token".to_string()),
+                pull_token: Some("pull-token".to_string()),
+                ack_token: Some("ack-token".to_string()),
                 admin_token: Some("admin".to_string()),
                 max_body_bytes: 1024 * 1024,
                 default_ttl_secs: 60,
@@ -517,7 +541,11 @@ mod tests {
             envelope: sample_envelope("bob", 2),
             ttl_secs: Some(60),
         };
-        let headers = HeaderMap::new();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer push-token"),
+        );
         let connect_info = Some(ConnectInfo(
             "127.0.0.1:40123"
                 .parse::<std::net::SocketAddr>()
@@ -558,7 +586,11 @@ mod tests {
         )
         .await;
 
-        let headers = HeaderMap::new();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer push-token"),
+        );
         let connect_info = Some(ConnectInfo(
             "127.0.0.1:40124"
                 .parse::<std::net::SocketAddr>()
@@ -622,12 +654,122 @@ mod tests {
                     .parse::<std::net::SocketAddr>()
                     .expect("addr"),
             )),
-            HeaderMap::new(),
+            {
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    axum::http::header::AUTHORIZATION,
+                    HeaderValue::from_static("Bearer push-token"),
+                );
+                headers
+            },
             Bytes::from(serde_json::to_vec(&req).expect("req json")),
         )
         .await
         .expect_err("malformed envelope must be rejected");
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn push_rejects_missing_bearer_token() {
+        let db_path = unique_db_path("missing_auth");
+        let state = make_state(
+            db_path.clone(),
+            MailboxLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            1000,
+            1000,
+        )
+        .await;
+
+        let req = PushRequest {
+            envelope: sample_envelope("bob", 1),
+            ttl_secs: Some(60),
+        };
+        let err = push(
+            State(state),
+            Some(ConnectInfo(
+                "127.0.0.1:40126"
+                    .parse::<std::net::SocketAddr>()
+                    .expect("addr"),
+            )),
+            HeaderMap::new(),
+            Bytes::from(serde_json::to_vec(&req).expect("req json")),
+        )
+        .await
+        .expect_err("missing auth must be rejected");
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn pull_rejects_push_token() {
+        let db_path = unique_db_path("pull_wrong_scope");
+        let state = make_state(
+            db_path.clone(),
+            MailboxLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            1000,
+            1000,
+        )
+        .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer push-token"),
+        );
+        let err = pull(
+            State(state),
+            headers,
+            Json(PullRequest {
+                to: "bob".to_string(),
+                max: Some(1),
+                wait_ms: Some(0),
+            }),
+        )
+        .await
+        .expect_err("push token must not authorize pull");
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn ack_rejects_pull_token() {
+        let db_path = unique_db_path("ack_wrong_scope");
+        let state = make_state(
+            db_path.clone(),
+            MailboxLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            1000,
+            1000,
+        )
+        .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer pull-token"),
+        );
+        let err = ack(
+            State(state),
+            headers,
+            Json(AckRequest {
+                receipt: "r".to_string(),
+            }),
+        )
+        .await
+        .expect_err("pull token must not authorize ack");
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
         let _ = std::fs::remove_file(db_path);
     }
 }

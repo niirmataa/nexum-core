@@ -58,11 +58,19 @@ enum Command {
         #[arg(long, env = "NXMS_MAILBOX_MAX_WAIT_MS", default_value_t = 20_000)]
         max_wait_ms: u64,
 
-        /// Optional bearer token required for all endpoints.
-        #[arg(long, env = "NXMS_MAILBOX_TOKEN")]
-        token: Option<String>,
+        /// Bearer token required for /v1/push.
+        #[arg(long, env = "NXMS_MAILBOX_PUSH_TOKEN")]
+        push_token: Option<String>,
 
-        /// Optional admin bearer token for /v1/admin/* endpoints.
+        /// Bearer token required for /v1/pull.
+        #[arg(long, env = "NXMS_MAILBOX_PULL_TOKEN")]
+        pull_token: Option<String>,
+
+        /// Bearer token required for /v1/ack.
+        #[arg(long, env = "NXMS_MAILBOX_ACK_TOKEN")]
+        ack_token: Option<String>,
+
+        /// Bearer token required for /v1/admin/* endpoints.
         #[arg(long, env = "NXMS_MAILBOX_ADMIN_TOKEN")]
         admin_token: Option<String>,
 
@@ -226,6 +234,14 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+fn require_token(name: &str, value: Option<String>) -> Result<String, Box<dyn std::error::Error>> {
+    let token = value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| format!("{name} must be set and non-empty"))?;
+    Ok(token)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -244,7 +260,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             max_ttl_secs,
             lease_secs,
             max_wait_ms,
-            token,
+            push_token,
+            pull_token,
+            ack_token,
             admin_token,
             cleanup_secs,
             checkpoint_secs,
@@ -258,10 +276,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = PathBuf::from(db_path);
             let db = db::SqliteMailboxDb::new(db_path);
             db.init().await?;
+            let push_token = require_token("NXMS_MAILBOX_PUSH_TOKEN", push_token)?;
+            let pull_token = require_token("NXMS_MAILBOX_PULL_TOKEN", pull_token)?;
+            let ack_token = require_token("NXMS_MAILBOX_ACK_TOKEN", ack_token)?;
+            let admin_token = require_token("NXMS_MAILBOX_ADMIN_TOKEN", admin_token)?;
 
             let cfg = api::ApiConfig {
-                token,
-                admin_token,
+                push_token: Some(push_token),
+                pull_token: Some(pull_token),
+                ack_token: Some(ack_token),
+                admin_token: Some(admin_token),
                 max_body_bytes,
                 default_ttl_secs,
                 max_ttl_secs,
@@ -339,6 +363,16 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower::ServiceExt;
 
+    #[test]
+    fn require_token_rejects_missing_or_blank_values() {
+        assert!(require_token("NXMS_MAILBOX_PUSH_TOKEN", None).is_err());
+        assert!(require_token("NXMS_MAILBOX_PUSH_TOKEN", Some("   ".to_string())).is_err());
+        assert_eq!(
+            require_token("NXMS_MAILBOX_PUSH_TOKEN", Some(" secret ".to_string())).unwrap(),
+            "secret"
+        );
+    }
+
     fn unique_db_path(label: &str) -> PathBuf {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -360,7 +394,9 @@ mod tests {
         let state = AppState {
             db,
             cfg: api::ApiConfig {
-                token: None,
+                push_token: Some("push-token".to_string()),
+                pull_token: Some("pull-token".to_string()),
+                ack_token: Some("ack-token".to_string()),
                 admin_token: Some("admin".to_string()),
                 max_body_bytes: 256,
                 default_ttl_secs: 60,
@@ -404,6 +440,7 @@ mod tests {
             .method("POST")
             .uri("/v1/push")
             .header("content-type", "application/json")
+            .header("authorization", "Bearer push-token")
             .body(Body::from(body.to_string()))
             .expect("request");
 

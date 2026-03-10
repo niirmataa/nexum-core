@@ -100,6 +100,7 @@ pub struct SignerConfig {
     pub mailbox_url: String,
     pub mailbox_token: Option<String>,
     pub mailbox_admin_token: Option<String>,
+    pub worker_service_token: Option<String>,
     pub tor_socks5h: Option<String>,
     #[serde(default = "default_mailbox_retry_attempts")]
     pub mailbox_retry_attempts: u32,
@@ -187,6 +188,11 @@ impl SignerConfig {
             .as_deref()
             .map(secret_uses_vault_reference)
             .unwrap_or(false);
+        let worker_service_token_from_vault_ref = self
+            .worker_service_token
+            .as_deref()
+            .map(secret_uses_vault_reference)
+            .unwrap_or(false);
         let wallet_password_from_vault_ref =
             secret_uses_vault_reference(&self.wallet_rpc.wallet_password);
         let wallet_rpc_password_from_vault_ref =
@@ -223,6 +229,12 @@ impl SignerConfig {
         }
         if let Some(tok) = &mut self.mailbox_admin_token {
             *tok = resolve_secret_value(tok, "mailbox_admin_token")?;
+        }
+        if let Some(tok) = &mut self.worker_service_token {
+            *tok = resolve_secret_value(tok, "worker_service_token")?;
+            if tok.trim().is_empty() {
+                return Err(anyhow!("worker_service_token must not be empty"));
+            }
         }
 
         if let Some(socks) = &mut self.tor_socks5h {
@@ -330,6 +342,11 @@ set allow_remote_wallet_rpc=true only for controlled break-glass scenarios",
                     "NXMS Falcon multisig mode requires [action_token].required=true (set NXMS_SIGNER_ALLOW_SHADOW_MODE=true only for break-glass)"
                 ));
             }
+        }
+        if self.worker_service_token.is_none() {
+            return Err(anyhow!(
+                "nxms-signer worker API requires worker_service_token"
+            ));
         }
 
         if let Some(wallet_provision) = &mut self.wallet_provision {
@@ -448,6 +465,22 @@ set allow_remote_wallet_rpc=true only for controlled break-glass scenarios",
                     "production_hardening=true requires mailbox_admin_token to use vault: secret reference"
                 ));
             }
+            if self
+                .worker_service_token
+                .as_deref()
+                .unwrap_or_default()
+                .len()
+                < 16
+            {
+                return Err(anyhow!(
+                    "production_hardening=true requires worker_service_token with min 16 chars"
+                ));
+            }
+            if !worker_service_token_from_vault_ref {
+                return Err(anyhow!(
+                    "production_hardening=true requires worker_service_token to use vault: secret reference"
+                ));
+            }
             let action_token = self.action_token.as_ref().ok_or_else(|| {
                 anyhow!("production_hardening=true requires [action_token] section")
             })?;
@@ -552,6 +585,21 @@ set allow_remote_wallet_rpc=true only for controlled break-glass scenarios",
             format!(
                 "mailbox_token_len={}",
                 self.mailbox_token.as_deref().unwrap_or_default().len()
+            ),
+        );
+        add(
+            "worker_service_token_min_len",
+            self.worker_service_token
+                .as_deref()
+                .unwrap_or_default()
+                .len()
+                >= 16,
+            format!(
+                "worker_service_token_len={}",
+                self.worker_service_token
+                    .as_deref()
+                    .unwrap_or_default()
+                    .len()
             ),
         );
         add(
@@ -721,6 +769,7 @@ mod tests {
             mailbox_url: "http://mailbox.onion".to_string(),
             mailbox_token: Some("1234567890abcdef".to_string()),
             mailbox_admin_token: None,
+            worker_service_token: Some("1234567890abcdef-worker".to_string()),
             tor_socks5h: Some("socks5h://127.0.0.1:9050".to_string()),
             mailbox_retry_attempts: 3,
             mailbox_retry_backoff_ms: 250,
@@ -798,13 +847,21 @@ mod tests {
         let wallet_password = temp_secret_file("wallet_password", "wallet-pass");
         let rpc_password = temp_secret_file("rpc_password", "rpc-pass");
         let mailbox_token = temp_secret_file("mailbox_token", "1234567890abcdef");
+        let worker_service_token =
+            temp_secret_file("worker_service_token", "1234567890abcdef-worker");
 
         cfg.wallet_rpc.wallet_password = format!("vault:{}", wallet_password.display());
         cfg.wallet_rpc.password = format!("vault:{}", rpc_password.display());
         cfg.mailbox_token = Some(format!("vault:{}", mailbox_token.display()));
+        cfg.worker_service_token = Some(format!("vault:{}", worker_service_token.display()));
 
         TestVaultSecrets {
-            paths: vec![wallet_password, rpc_password, mailbox_token],
+            paths: vec![
+                wallet_password,
+                rpc_password,
+                mailbox_token,
+                worker_service_token,
+            ],
         }
     }
 
@@ -1055,6 +1112,10 @@ mod tests {
             cfg.mailbox_token.as_deref().unwrap_or_default(),
             "1234567890abcdef"
         );
+        assert_eq!(
+            cfg.worker_service_token.as_deref().unwrap_or_default(),
+            "1234567890abcdef-worker"
+        );
     }
 
     #[test]
@@ -1065,10 +1126,12 @@ mod tests {
         cfg.wallet_rpc.wallet_password = "env:NXMS_TEST_WALLET_PASSWORD".to_string();
         cfg.wallet_rpc.password = "env:NXMS_TEST_RPC_PASSWORD".to_string();
         cfg.mailbox_token = Some("env:NXMS_TEST_MAILBOX_TOKEN".to_string());
+        cfg.worker_service_token = Some("env:NXMS_TEST_WORKER_SERVICE_TOKEN".to_string());
         unsafe {
             std::env::set_var("NXMS_TEST_WALLET_PASSWORD", "wallet-pass");
             std::env::set_var("NXMS_TEST_RPC_PASSWORD", "rpc-pass");
             std::env::set_var("NXMS_TEST_MAILBOX_TOKEN", "1234567890abcdef");
+            std::env::set_var("NXMS_TEST_WORKER_SERVICE_TOKEN", "1234567890abcdef-worker");
         }
         let err = cfg
             .normalize()
@@ -1081,7 +1144,36 @@ mod tests {
             std::env::remove_var("NXMS_TEST_WALLET_PASSWORD");
             std::env::remove_var("NXMS_TEST_RPC_PASSWORD");
             std::env::remove_var("NXMS_TEST_MAILBOX_TOKEN");
+            std::env::remove_var("NXMS_TEST_WORKER_SERVICE_TOKEN");
         }
+    }
+
+    #[test]
+    fn default_mode_requires_worker_service_token() {
+        let _guard = env_lock().lock().expect("env lock");
+        clear_shadow_mode_env();
+        let mut cfg = base_cfg();
+        cfg.worker_service_token = None;
+        let err = cfg
+            .normalize()
+            .expect_err("default mode must reject missing worker service token");
+        assert!(err.to_string().contains("worker_service_token"));
+    }
+
+    #[test]
+    fn production_hardening_rejects_literal_worker_service_token() {
+        let _guard = env_lock().lock().expect("env lock");
+        let mut cfg = base_cfg();
+        cfg.production_hardening = true;
+        let _vault = apply_production_vault_secrets(&mut cfg);
+        cfg.worker_service_token = Some("literal-worker-token".to_string());
+        let err = cfg
+            .normalize()
+            .expect_err("literal worker service token must be rejected");
+        assert!(
+            err.to_string()
+                .contains("worker_service_token to use vault: secret reference")
+        );
     }
 
     #[test]

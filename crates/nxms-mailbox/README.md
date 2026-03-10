@@ -13,10 +13,13 @@ cargo run --release -- serve \
   --db-path /var/lib/nxms-mailbox/mailbox.db
 ```
 
-Optional auth (bearer token):
+Required auth tokens:
 
 ```sh
-NXMS_MAILBOX_TOKEN='supersecret' \
+NXMS_MAILBOX_PUSH_TOKEN='push-secret' \
+NXMS_MAILBOX_PULL_TOKEN='pull-secret' \
+NXMS_MAILBOX_ACK_TOKEN='ack-secret' \
+NXMS_MAILBOX_ADMIN_TOKEN='admin-secret' \
   cargo run --release -- serve --bind 127.0.0.1:4010 --db-path /var/lib/nxms-mailbox/mailbox.db
 ```
 
