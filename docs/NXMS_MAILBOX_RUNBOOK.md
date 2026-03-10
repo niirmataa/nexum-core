@@ -89,7 +89,7 @@ Preferred: enable client authorization (v3 auth) so only known clients can conne
 Minimum required fields:
 - `local_id`, `peers_path`, `keys_path`, `db_path`
 - `signer_role`, `sandbox_id`, `wallet_id`, `nettype`
-- `mailbox_url`, `mailbox_token`, `worker_service_token`, `tor_socks5h`
+- `mailbox_url`, `mailbox_push_token`, `mailbox_pull_token`, `mailbox_ack_token`, `worker_service_token`, `tor_socks5h`
 - `allow_remote_wallet_rpc=false` (required; remote wallet-rpc is not a supported runtime mode)
 - `production_hardening=true` (recommended in production)
 - `[wallet_rpc]`: endpoint + wallet credentials + digest auth credentials
@@ -101,7 +101,7 @@ Action token `snapshot_hash` must be canonical snapshot JSON hash:
 `sha256(canonical_json(sorted_keys(snapshot)))`.
 Secrets can be referenced as `vault:/path/to/secret`, `file:/path/to/secret`, or `env:VAR_NAME`.
 When `production_hardening=true`, `vault:` refs are mandatory for:
-- `mailbox_token` (and `mailbox_admin_token` if set),
+- `mailbox_push_token`, `mailbox_pull_token`, `mailbox_ack_token` (and `mailbox_admin_token` if set),
 - `worker_service_token`,
 - `wallet_rpc.wallet_password`,
 - `wallet_rpc.password`.

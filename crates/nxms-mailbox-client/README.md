@@ -11,7 +11,8 @@ use nxms_mailbox_client::MailboxClient;
 
 let client = MailboxClient::builder("http://example.onion:4010")?
     .tor_socks("socks5h://127.0.0.1:9050")
-    .token("supersecret")
+    .push_token("push-secret")
+    .pull_token("pull-secret-for-this-inbox")
+    .ack_token("ack-secret-for-this-inbox")
     .build()?;
 ```
-

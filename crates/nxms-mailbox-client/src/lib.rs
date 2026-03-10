@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 pub struct MailboxClient {
     base: Url,
     http: Client,
-    token: Option<String>,
+    push_token: Option<String>,
+    pull_token: Option<String>,
+    ack_token: Option<String>,
     admin_token: Option<String>,
 }
 
@@ -41,7 +43,7 @@ impl MailboxClient {
         };
 
         let mut r = self.http.post(url).json(&req);
-        if let Some(t) = &self.token {
+        if let Some(t) = &self.push_token {
             r = r.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", t));
         }
 
@@ -66,7 +68,7 @@ impl MailboxClient {
         };
 
         let mut r = self.http.post(url).json(&req);
-        if let Some(t) = &self.token {
+        if let Some(t) = &self.pull_token {
             r = r.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", t));
         }
 
@@ -84,7 +86,7 @@ impl MailboxClient {
         };
 
         let mut r = self.http.post(url).json(&req);
-        if let Some(t) = &self.token {
+        if let Some(t) = &self.ack_token {
             r = r.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", t));
         }
 
@@ -104,8 +106,6 @@ impl MailboxClient {
         let mut r = self.http.get(url);
         if let Some(t) = &self.admin_token {
             r = r.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", t));
-        } else if let Some(t) = &self.token {
-            r = r.header(reqwest::header::AUTHORIZATION, format!("Bearer {}", t));
         }
 
         let resp = r.send().await?;
@@ -119,7 +119,9 @@ impl MailboxClient {
 pub struct MailboxClientBuilder {
     base: Url,
     tor_socks: Option<String>,
-    token: Option<String>,
+    push_token: Option<String>,
+    pull_token: Option<String>,
+    ack_token: Option<String>,
     admin_token: Option<String>,
     timeout: Option<std::time::Duration>,
 }
@@ -130,7 +132,9 @@ impl MailboxClientBuilder {
         Ok(Self {
             base,
             tor_socks: None,
-            token: None,
+            push_token: None,
+            pull_token: None,
+            ack_token: None,
             admin_token: None,
             timeout: Some(std::time::Duration::from_secs(60)),
         })
@@ -143,9 +147,21 @@ impl MailboxClientBuilder {
         self
     }
 
-    /// Set bearer token for mailbox endpoints.
-    pub fn token(mut self, token: impl Into<String>) -> Self {
-        self.token = Some(token.into());
+    /// Set bearer token for mailbox push endpoint.
+    pub fn push_token(mut self, token: impl Into<String>) -> Self {
+        self.push_token = Some(token.into());
+        self
+    }
+
+    /// Set bearer token for mailbox pull endpoint.
+    pub fn pull_token(mut self, token: impl Into<String>) -> Self {
+        self.pull_token = Some(token.into());
+        self
+    }
+
+    /// Set bearer token for mailbox ack endpoint.
+    pub fn ack_token(mut self, token: impl Into<String>) -> Self {
+        self.ack_token = Some(token.into());
         self
     }
 
@@ -173,7 +189,9 @@ impl MailboxClientBuilder {
         Ok(MailboxClient {
             base: self.base,
             http,
-            token: self.token,
+            push_token: self.push_token,
+            pull_token: self.pull_token,
+            ack_token: self.ack_token,
             admin_token: self.admin_token,
         })
     }

@@ -98,7 +98,9 @@ pub struct SignerConfig {
     pub db_path: PathBuf,
 
     pub mailbox_url: String,
-    pub mailbox_token: Option<String>,
+    pub mailbox_push_token: Option<String>,
+    pub mailbox_pull_token: Option<String>,
+    pub mailbox_ack_token: Option<String>,
     pub mailbox_admin_token: Option<String>,
     pub worker_service_token: Option<String>,
     pub tor_socks5h: Option<String>,
@@ -178,8 +180,18 @@ impl SignerConfig {
     }
 
     fn normalize(&mut self) -> Result<()> {
-        let mailbox_token_from_vault_ref = self
-            .mailbox_token
+        let mailbox_push_token_from_vault_ref = self
+            .mailbox_push_token
+            .as_deref()
+            .map(secret_uses_vault_reference)
+            .unwrap_or(false);
+        let mailbox_pull_token_from_vault_ref = self
+            .mailbox_pull_token
+            .as_deref()
+            .map(secret_uses_vault_reference)
+            .unwrap_or(false);
+        let mailbox_ack_token_from_vault_ref = self
+            .mailbox_ack_token
             .as_deref()
             .map(secret_uses_vault_reference)
             .unwrap_or(false);
@@ -235,8 +247,14 @@ impl SignerConfig {
         if !mailbox_host.to_ascii_lowercase().ends_with(".onion") {
             return Err(anyhow!("mailbox_url host must be .onion"));
         }
-        if let Some(tok) = &mut self.mailbox_token {
-            *tok = resolve_secret_value(tok, "mailbox_token")?;
+        if let Some(tok) = &mut self.mailbox_push_token {
+            *tok = resolve_secret_value(tok, "mailbox_push_token")?;
+        }
+        if let Some(tok) = &mut self.mailbox_pull_token {
+            *tok = resolve_secret_value(tok, "mailbox_pull_token")?;
+        }
+        if let Some(tok) = &mut self.mailbox_ack_token {
+            *tok = resolve_secret_value(tok, "mailbox_ack_token")?;
         }
         if let Some(tok) = &mut self.mailbox_admin_token {
             *tok = resolve_secret_value(tok, "mailbox_admin_token")?;
@@ -272,6 +290,16 @@ impl SignerConfig {
                 .unwrap_or(false);
         if !socks_loopback {
             return Err(anyhow!("tor_socks5h host must be loopback"));
+        }
+
+        for (name, token) in [
+            ("mailbox_push_token", self.mailbox_push_token.as_deref()),
+            ("mailbox_pull_token", self.mailbox_pull_token.as_deref()),
+            ("mailbox_ack_token", self.mailbox_ack_token.as_deref()),
+        ] {
+            if token.unwrap_or_default().trim().is_empty() {
+                return Err(anyhow!("{name} must be set and non-empty"));
+            }
         }
 
         self.wallet_rpc.endpoint = self
@@ -432,14 +460,34 @@ impl SignerConfig {
                     "production_hardening=true requires wallet_rpc.password to use vault: secret reference"
                 ));
             }
-            if self.mailbox_token.as_deref().unwrap_or_default().len() < 16 {
+            if self.mailbox_push_token.as_deref().unwrap_or_default().len() < 16 {
                 return Err(anyhow!(
-                    "production_hardening=true requires mailbox_token with min 16 chars"
+                    "production_hardening=true requires mailbox_push_token with min 16 chars"
                 ));
             }
-            if !mailbox_token_from_vault_ref {
+            if !mailbox_push_token_from_vault_ref {
                 return Err(anyhow!(
-                    "production_hardening=true requires mailbox_token to use vault: secret reference"
+                    "production_hardening=true requires mailbox_push_token to use vault: secret reference"
+                ));
+            }
+            if self.mailbox_pull_token.as_deref().unwrap_or_default().len() < 16 {
+                return Err(anyhow!(
+                    "production_hardening=true requires mailbox_pull_token with min 16 chars"
+                ));
+            }
+            if !mailbox_pull_token_from_vault_ref {
+                return Err(anyhow!(
+                    "production_hardening=true requires mailbox_pull_token to use vault: secret reference"
+                ));
+            }
+            if self.mailbox_ack_token.as_deref().unwrap_or_default().len() < 16 {
+                return Err(anyhow!(
+                    "production_hardening=true requires mailbox_ack_token with min 16 chars"
+                ));
+            }
+            if !mailbox_ack_token_from_vault_ref {
+                return Err(anyhow!(
+                    "production_hardening=true requires mailbox_ack_token to use vault: secret reference"
                 ));
             }
             if self.mailbox_admin_token.is_some() && !mailbox_admin_token_from_vault_ref {
@@ -559,11 +607,27 @@ impl SignerConfig {
             ),
         );
         add(
-            "mailbox_token_min_len",
-            self.mailbox_token.as_deref().unwrap_or_default().len() >= 16,
+            "mailbox_push_token_min_len",
+            self.mailbox_push_token.as_deref().unwrap_or_default().len() >= 16,
             format!(
-                "mailbox_token_len={}",
-                self.mailbox_token.as_deref().unwrap_or_default().len()
+                "mailbox_push_token_len={}",
+                self.mailbox_push_token.as_deref().unwrap_or_default().len()
+            ),
+        );
+        add(
+            "mailbox_pull_token_min_len",
+            self.mailbox_pull_token.as_deref().unwrap_or_default().len() >= 16,
+            format!(
+                "mailbox_pull_token_len={}",
+                self.mailbox_pull_token.as_deref().unwrap_or_default().len()
+            ),
+        );
+        add(
+            "mailbox_ack_token_min_len",
+            self.mailbox_ack_token.as_deref().unwrap_or_default().len() >= 16,
+            format!(
+                "mailbox_ack_token_len={}",
+                self.mailbox_ack_token.as_deref().unwrap_or_default().len()
             ),
         );
         add(
@@ -741,7 +805,9 @@ mod tests {
             keys_path: PathBuf::from("keys.json"),
             db_path: PathBuf::from("signer.db"),
             mailbox_url: "http://mailbox.onion".to_string(),
-            mailbox_token: Some("1234567890abcdef".to_string()),
+            mailbox_push_token: Some("1234567890abcdef-push".to_string()),
+            mailbox_pull_token: Some("1234567890abcdef-pull".to_string()),
+            mailbox_ack_token: Some("1234567890abcdef-ack".to_string()),
             mailbox_admin_token: None,
             worker_service_token: Some("1234567890abcdef-worker".to_string()),
             tor_socks5h: Some("socks5h://127.0.0.1:9050".to_string()),
@@ -820,20 +886,26 @@ mod tests {
     fn apply_production_vault_secrets(cfg: &mut SignerConfig) -> TestVaultSecrets {
         let wallet_password = temp_secret_file("wallet_password", "wallet-pass");
         let rpc_password = temp_secret_file("rpc_password", "rpc-pass");
-        let mailbox_token = temp_secret_file("mailbox_token", "1234567890abcdef");
+        let mailbox_push_token = temp_secret_file("mailbox_push_token", "1234567890abcdef-push");
+        let mailbox_pull_token = temp_secret_file("mailbox_pull_token", "1234567890abcdef-pull");
+        let mailbox_ack_token = temp_secret_file("mailbox_ack_token", "1234567890abcdef-ack");
         let worker_service_token =
             temp_secret_file("worker_service_token", "1234567890abcdef-worker");
 
         cfg.wallet_rpc.wallet_password = format!("vault:{}", wallet_password.display());
         cfg.wallet_rpc.password = format!("vault:{}", rpc_password.display());
-        cfg.mailbox_token = Some(format!("vault:{}", mailbox_token.display()));
+        cfg.mailbox_push_token = Some(format!("vault:{}", mailbox_push_token.display()));
+        cfg.mailbox_pull_token = Some(format!("vault:{}", mailbox_pull_token.display()));
+        cfg.mailbox_ack_token = Some(format!("vault:{}", mailbox_ack_token.display()));
         cfg.worker_service_token = Some(format!("vault:{}", worker_service_token.display()));
 
         TestVaultSecrets {
             paths: vec![
                 wallet_password,
                 rpc_password,
-                mailbox_token,
+                mailbox_push_token,
+                mailbox_pull_token,
+                mailbox_ack_token,
                 worker_service_token,
             ],
         }
@@ -1088,8 +1160,16 @@ mod tests {
         assert_eq!(cfg.wallet_rpc.wallet_password, "wallet-pass");
         assert_eq!(cfg.wallet_rpc.password, "rpc-pass");
         assert_eq!(
-            cfg.mailbox_token.as_deref().unwrap_or_default(),
-            "1234567890abcdef"
+            cfg.mailbox_push_token.as_deref().unwrap_or_default(),
+            "1234567890abcdef-push"
+        );
+        assert_eq!(
+            cfg.mailbox_pull_token.as_deref().unwrap_or_default(),
+            "1234567890abcdef-pull"
+        );
+        assert_eq!(
+            cfg.mailbox_ack_token.as_deref().unwrap_or_default(),
+            "1234567890abcdef-ack"
         );
         assert_eq!(
             cfg.worker_service_token.as_deref().unwrap_or_default(),
@@ -1104,12 +1184,16 @@ mod tests {
         cfg.production_hardening = true;
         cfg.wallet_rpc.wallet_password = "env:NXMS_TEST_WALLET_PASSWORD".to_string();
         cfg.wallet_rpc.password = "env:NXMS_TEST_RPC_PASSWORD".to_string();
-        cfg.mailbox_token = Some("env:NXMS_TEST_MAILBOX_TOKEN".to_string());
+        cfg.mailbox_push_token = Some("env:NXMS_TEST_MAILBOX_PUSH_TOKEN".to_string());
+        cfg.mailbox_pull_token = Some("env:NXMS_TEST_MAILBOX_PULL_TOKEN".to_string());
+        cfg.mailbox_ack_token = Some("env:NXMS_TEST_MAILBOX_ACK_TOKEN".to_string());
         cfg.worker_service_token = Some("env:NXMS_TEST_WORKER_SERVICE_TOKEN".to_string());
         unsafe {
             std::env::set_var("NXMS_TEST_WALLET_PASSWORD", "wallet-pass");
             std::env::set_var("NXMS_TEST_RPC_PASSWORD", "rpc-pass");
-            std::env::set_var("NXMS_TEST_MAILBOX_TOKEN", "1234567890abcdef");
+            std::env::set_var("NXMS_TEST_MAILBOX_PUSH_TOKEN", "1234567890abcdef-push");
+            std::env::set_var("NXMS_TEST_MAILBOX_PULL_TOKEN", "1234567890abcdef-pull");
+            std::env::set_var("NXMS_TEST_MAILBOX_ACK_TOKEN", "1234567890abcdef-ack");
             std::env::set_var("NXMS_TEST_WORKER_SERVICE_TOKEN", "1234567890abcdef-worker");
         }
         let err = cfg
@@ -1122,7 +1206,9 @@ mod tests {
         unsafe {
             std::env::remove_var("NXMS_TEST_WALLET_PASSWORD");
             std::env::remove_var("NXMS_TEST_RPC_PASSWORD");
-            std::env::remove_var("NXMS_TEST_MAILBOX_TOKEN");
+            std::env::remove_var("NXMS_TEST_MAILBOX_PUSH_TOKEN");
+            std::env::remove_var("NXMS_TEST_MAILBOX_PULL_TOKEN");
+            std::env::remove_var("NXMS_TEST_MAILBOX_ACK_TOKEN");
             std::env::remove_var("NXMS_TEST_WORKER_SERVICE_TOKEN");
         }
     }

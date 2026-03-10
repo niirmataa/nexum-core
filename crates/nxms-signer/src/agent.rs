@@ -69,8 +69,14 @@ impl SignerAgent {
         db.init().await?;
 
         let mut builder = MailboxClient::builder(&cfg.mailbox_url)?;
-        if let Some(token) = &cfg.mailbox_token {
-            builder = builder.token(token.clone());
+        if let Some(token) = &cfg.mailbox_push_token {
+            builder = builder.push_token(token.clone());
+        }
+        if let Some(token) = &cfg.mailbox_pull_token {
+            builder = builder.pull_token(token.clone());
+        }
+        if let Some(token) = &cfg.mailbox_ack_token {
+            builder = builder.ack_token(token.clone());
         }
         if let Some(admin_token) = &cfg.mailbox_admin_token {
             builder = builder.admin_token(admin_token.clone());
