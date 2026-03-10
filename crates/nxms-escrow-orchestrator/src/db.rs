@@ -2970,23 +2970,21 @@ mod tests {
         .expect("insert orphan invalid proposal");
         conn.execute(
             r#"
-            INSERT INTO submission_watch(
-                escrow_id_hex, txid, required_confirmations, status,
-                last_confirmations, double_spend_seen, created_at_ms, updated_at_ms
-            ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            INSERT INTO quorum_sign_proofs(
+                escrow_id_hex, role, sign_round, txset_hash_hex, jti, req_id, updated_at_ms
+            ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
             "#,
             params![
                 "00112233445566778899aabbccddeeff",
+                "seller",
+                "seller_second",
+                "11",
+                "",
                 "abc",
-                0_i64,
-                "pending",
-                0_i64,
-                0_i64,
-                now,
                 now
             ],
         )
-        .expect("insert invalid submission_watch");
+        .expect("insert invalid quorum_sign_proof");
 
         let findings = db.check_integrity(50).await.expect("integrity");
         assert!(
@@ -3007,13 +3005,17 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .any(|f| f.table == "submission_watch" && f.issue == "invalid_txid")
+                .any(|f| f.table == "quorum_sign_proofs" && f.issue == "invalid_txset_hash")
         );
         assert!(
             findings
                 .iter()
-                .any(|f| f.table == "submission_watch"
-                    && f.issue == "invalid_required_confirmations")
+                .any(|f| f.table == "quorum_sign_proofs" && f.issue == "invalid_jti")
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.table == "quorum_sign_proofs" && f.issue == "invalid_req_id")
         );
 
         let _ = std::fs::remove_file(db_path);

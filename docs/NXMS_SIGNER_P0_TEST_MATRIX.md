@@ -66,8 +66,9 @@ Scope: `nxms-signer` truth-guarding tests for the canonical `nxms-transport -> n
   It is still a local boundary gate, not proof of cross-host Tor/onion deployment.
 - `workspace-level orchestrated control-plane gate`
   `tests/e2e_orchestrated_flow.rs::workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane`
-  This test proves that a real orchestrator control-plane DB state can issue a real submit token
-  accepted by the signer runtime, without poisoning dead-letter truth during normal workflow progress.
+  This gate is shared with orchestrator control-plane truth and is specified in
+  `docs/NXMS_ORCHESTRATOR_P0_TEST_MATRIX.md`.
+  From signer perspective, it proves that a real orchestrator-issued submit token is accepted by signer runtime.
   It is still a local component/control-plane gate, not proof of cross-host Tor/onion deployment.
 
 ## Real Gate For This Stage
