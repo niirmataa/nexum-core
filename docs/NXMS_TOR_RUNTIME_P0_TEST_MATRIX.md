@@ -8,6 +8,8 @@ Scope: real deploy/runtime validation of the canonical cross-host path over Tor 
 - Workspace tests prove component truth.
 - This matrix proves deploy truth: OpenRC units, Tor hidden service, onion reachability and runtime startup assumptions.
 - A stage is not deploy-real until these checks pass on the actual Alpine/OpenRC host.
+- Onion reachability must be validated from a second Tor client or a second host.
+- Do not treat `service-host Tor -> service-host own .onion` as a reliable gate by itself.
 
 ## P0 Coverage
 - `Stage 1: mailbox over Tor`
@@ -28,7 +30,8 @@ Scope: real deploy/runtime validation of the canonical cross-host path over Tor 
 - `hidden service publication`
   `cat /var/lib/tor/nxms-mailbox/hostname`
 - `mailbox onion ingress`
-  `curl --socks5-hostname 127.0.0.1:9050 -fsS http://<mailbox-onion>/health`
+  from a second Tor client:
+  `curl --socks5-hostname 127.0.0.1:<second-socks-port> -fsS http://<mailbox-onion>/health`
 - `signer config hardening`
   `nxms-signer security check --config /etc/nxms/signer.toml`
 - `Tor smoke`
@@ -54,7 +57,7 @@ rc-service nxms-mailbox status
 rc-service nxms-signer status
 cat /var/lib/tor/nxms-mailbox/hostname
 curl -fsS http://127.0.0.1:4010/health
-curl --socks5-hostname 127.0.0.1:9050 -fsS http://<mailbox-onion>/health
+curl --socks5-hostname 127.0.0.1:<second-socks-port> -fsS http://<mailbox-onion>/health
 nxms-signer security check --config /etc/nxms/signer.toml
 ```
 
@@ -70,5 +73,19 @@ rc-service tor status
 rc-service nxms-mailbox status
 cat /var/lib/tor/nxms-mailbox/hostname
 curl -fsS http://127.0.0.1:4010/health
-curl --socks5-hostname 127.0.0.1:9050 -fsS "http://$(cat /var/lib/tor/nxms-mailbox/hostname)/health"
+curl --socks5-hostname 127.0.0.1:<second-socks-port> -fsS "http://$(cat /var/lib/tor/nxms-mailbox/hostname)/health"
+```
+
+Example second Tor client on the same Alpine VM:
+
+```bash
+mkdir -p /home/operator/tor-client-test
+cat > /home/operator/tor-client-test/torrc <<'EOF'
+SocksPort 127.0.0.1:19050
+DataDirectory /home/operator/tor-client-test/data
+PidFile /home/operator/tor-client-test/tor.pid
+Log notice file /home/operator/tor-client-test/tor.log
+EOF
+tor -f /home/operator/tor-client-test/torrc --RunAsDaemon 1
+curl --socks5-hostname 127.0.0.1:19050 -fsS "http://$(cat /var/lib/tor/nxms-mailbox/hostname)/health"
 ```

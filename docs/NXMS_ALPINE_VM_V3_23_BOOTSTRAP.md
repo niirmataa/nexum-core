@@ -305,7 +305,24 @@ doas cat /var/lib/tor/nxms-mailbox/hostname
 doas rc-service nxms-mailbox start
 doas rc-service nxms-mailbox status
 curl -fsS http://127.0.0.1:4010/health
-curl --socks5-hostname 127.0.0.1:9050 -fsS "http://$(doas cat /var/lib/tor/nxms-mailbox/hostname)/health"
+```
+
+Do not use the same Tor service instance as the only onion ingress proof for its own hidden service.
+Use a second Tor client or a second host.
+
+Example second Tor client on the same Alpine VM:
+
+```bash
+mkdir -p /home/operator/tor-client-test
+cat > /home/operator/tor-client-test/torrc <<'EOF'
+SocksPort 127.0.0.1:19050
+DataDirectory /home/operator/tor-client-test/data
+PidFile /home/operator/tor-client-test/tor.pid
+Log notice file /home/operator/tor-client-test/tor.log
+EOF
+tor -f /home/operator/tor-client-test/torrc --RunAsDaemon 1
+tail -n 80 /home/operator/tor-client-test/tor.log
+curl --socks5-hostname 127.0.0.1:19050 -fsS "http://$(doas cat /var/lib/tor/nxms-mailbox/hostname)/health"
 ```
 
 If these fail, stop and fix mailbox/Tor before touching signer.
@@ -389,7 +406,7 @@ doas rc-service nxms-signer restart
 doas rc-service nxms-mailbox status
 doas rc-service nxms-signer status
 curl -fsS http://127.0.0.1:4010/health
-curl --socks5-hostname 127.0.0.1:9050 -fsS "http://$(doas cat /var/lib/tor/nxms-mailbox/hostname)/health"
+curl --socks5-hostname 127.0.0.1:19050 -fsS "http://$(doas cat /var/lib/tor/nxms-mailbox/hostname)/health"
 /opt/nxms/bin/nxms-signer security check --config /etc/nxms/signer.toml
 ```
 

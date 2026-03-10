@@ -53,7 +53,21 @@ Smoke:
 
 ```sh
 curl -fsS http://127.0.0.1:4010/health
-curl --socks5-hostname 127.0.0.1:9050 -fsS "http://$(cat /var/lib/tor/nxms-mailbox/hostname)/health"
+```
+
+For deploy-real onion ingress proof, use a second Tor client or a second host.
+Example second local Tor client:
+
+```sh
+mkdir -p /tmp/tor-client-mailbox
+cat > /tmp/tor-client-mailbox/torrc <<'EOF'
+SocksPort 127.0.0.1:19050
+DataDirectory /tmp/tor-client-mailbox/data
+PidFile /tmp/tor-client-mailbox/tor.pid
+Log notice file /tmp/tor-client-mailbox/tor.log
+EOF
+tor -f /tmp/tor-client-mailbox/torrc --RunAsDaemon 1
+curl --socks5-hostname 127.0.0.1:19050 -fsS "http://$(cat /var/lib/tor/nxms-mailbox/hostname)/health"
 ```
 
 ## API

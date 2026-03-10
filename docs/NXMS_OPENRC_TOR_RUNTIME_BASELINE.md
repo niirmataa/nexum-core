@@ -70,3 +70,4 @@ Scope: Alpine/OpenRC deploy baseline for the canonical `nxms-transport -> nxms-m
 These files define deploy baseline and startup truth.
 They do not by themselves prove a live Tor deployment.
 Live Tor/onion validation must be executed separately as deploy/runtime P0.
+Use a second Tor client or a second host for onion ingress validation; do not rely only on self-testing a hidden service through the same Tor instance that publishes it.
