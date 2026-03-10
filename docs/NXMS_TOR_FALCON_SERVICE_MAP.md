@@ -94,7 +94,7 @@ Notes:
   - `nxms-signer serve` health OK on `127.0.0.1:28090` using temporary P0 config with required action-token + service-auth runtime boundary
   - `nxms-signer run` + local `nxms-mailbox serve` concurrency check OK for 5s (both alive, no mailbox pull connection warnings)
   - `nxms-escrow-orchestrator init-db` + `run --once` OK on local test DB (`/tmp/nxms-p0/orchestrator/nxms_orchestrator.db`)
-- Orchestrator worker-route capability verified on local test DB (`worker-route set/show` for `seller` and `arbiter` roles).
+- Legacy note: local `worker-route` checks were historical interoperability probes, not the target NXMS runtime path.
 
 ## Local Run Log (Manual / Host-Specific)
 
@@ -114,19 +114,19 @@ Recorded local/manual commands (2026-02-22):
 - `[LOCAL/P0]` `escrow/nxms-mailbox/target/release/nxms-mailbox serve --bind 127.0.0.1:4010` + local `/health` check (manual runtime availability)
 - `[LOCAL/P0]` `escrow/nxms-signer/target/release/nxms-signer serve` and `run` using temporary local config under `/tmp/nxms-p0/` (fail-closed action-token runtime check)
 - `[LOCAL/P0]` `escrow/nxms-escrow-orchestrator/target/release/nxms-escrow-orchestrator init-db` and `run --once` on `/tmp/nxms-p0/orchestrator/nxms_orchestrator.db`
-- `[LOCAL/P0]` `./nexum_cli/nexum worker-route-set` / `worker-route-show` against local orchestrator test DB (`seller`, `arbiter`)
+- `[LOCAL/P0][LEGACY]` `./nexum_cli/nexum worker-route-set` / `worker-route-show` against local orchestrator test DB (`seller`, `arbiter`)
 - `[LOCAL/P1]` `./nexum_cli/nexum --help` (captured current command surface for matrix inventory; current binary prints help and exits with code `1`)
 - `[LOCAL/P1]` `./nexum_cli/nexum preflight escrow --base http://<escrow-onion> --ui-base http://<nxms-serv-onion> --socks5 socks5h://127.0.0.1:9050 --run-dir commit/final_gate/operator_preflight/20260222T203202Z --verbose`
   - Result: `NOT_READY` (expected for backend/operator preflight on current host runtime state)
   - PASS examples: Tor SOCKS, escrow `/health` over Tor, monerod RPC+sync probe (with warnings), wallet-rpc arbiter/party TCP + auth challenge, redis
   - WARN examples: `nxms-serv` `/escrow` onion path `502`, monerod bootstrap/sync status (without strict flags)
-  - FAIL examples: `nxms-mailbox`/`nxms-signer` not running, orchestrator binary not in `PATH`, strict worker-route flags not exported in current shell
+  - FAIL examples: `nxms-mailbox`/`nxms-signer` not running, orchestrator binary not in `PATH`, legacy worker-route flags not exported in current shell
   - Artifacts written: `preflight/summary.txt`, `preflight/checks.tsv`, `preflight/manifest.json`
 - `[LOCAL/P1]` `./nexum_cli/nexum preflight escrow ... --json --strict-wallet-multisig --check-transfer-dry-run --escrow-id-hex 00112233445566778899aabbccddeeff`
   - Test run artifact root: `commit/final_gate/operator_preflight/20260222T204540Z/` (JSON captured in sibling file during local test)
   - `--json` output validated as parseable JSON (`format=nexum_cli_preflight_output_v1`)
   - Deep probe results (current host/runtime): party transfer dry-run probe `PASS`; arbiter multisig probe reached `is_multisig` and returned `FAIL` (`WALLET_RPC_ARBITER_NOT_MULTISIG`) on current active wallet/runtime context
-  - Per-escrow worker-route probe (`seller`, `arbiter`) `PASS` against local test orchestrator DB (`/tmp/nxms-p0/orchestrator/nxms_orchestrator.db`)
+  - Per-escrow worker-route probe (`seller`, `arbiter`) `PASS` against local test orchestrator DB (`/tmp/nxms-p0/orchestrator/nxms_orchestrator.db`) as legacy/operator evidence only
   - Overall verdict remained `NOT_READY` (other runtime components still down / UI path `502`)
 - `[LOCAL/P1]` P1 preflight fix loop (`preflight -> runtime fixes -> rerun`) with deep probes over Tor/onion and local NXMS runtime
   - Build discipline applied before runtime changes and again after parser fix/retest (`nexum_cli`, `monero-arbitra`, `nxms-mailbox`, `nxms-signer`, `nxms-escrow-orchestrator`)
@@ -186,9 +186,10 @@ Required runtime set for real Tor flow:
 5. `wallet-rpc-arbiter`
 6. `wallet-rpc-party`
 7. `redis`
-8. `nxms-escrow-orchestrator`
-9. `nxms-signer`
-10. `nxms-mailbox`
+8. `nxms-signer`
+9. `nxms-mailbox`
+
+`nxms-escrow-orchestrator` remains control-plane/manual tooling, not a mandatory cross-host data-plane hop for canonical NXMS transport flow.
 
 Optional/support:
 

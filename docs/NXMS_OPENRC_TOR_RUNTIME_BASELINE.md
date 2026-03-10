@@ -16,6 +16,7 @@ Scope: Alpine/OpenRC deploy baseline for the canonical `nxms-transport -> nxms-m
 - [deploy/openrc/nxms-signer](/home/nxms-server/nexum-core/deploy/openrc/nxms-signer)
 - [deploy/openrc/nxms-signer.confd](/home/nxms-server/nexum-core/deploy/openrc/nxms-signer.confd)
 - [deploy/tor/nxms-mailbox-hidden-service.conf.example](/home/nxms-server/nexum-core/deploy/tor/nxms-mailbox-hidden-service.conf.example)
+- [docs/NXMS_ALPINE_VM_V3_23_BOOTSTRAP.md](/home/nxms-server/nexum-core/docs/NXMS_ALPINE_VM_V3_23_BOOTSTRAP.md)
 
 ## Runtime Topology
 - Host A:

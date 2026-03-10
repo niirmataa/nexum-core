@@ -8,15 +8,20 @@ Last update: 2026-03-10
 - Escrow API stays separate (informational only).
 
 ## Escrow HTTP Integration
+Legacy/operator-only note:
+- `escrow_http`, `worker-route`, env-template routing do `nxms-signer serve` i podobne HTTP adapter paths nie należą do kanonicznego NXMS runtime.
+- Kanoniczny cross-host runtime path to tylko `nxms-transport -> nxms-mailbox -> nxms-signer` over Tor hidden service.
+- Poniższa sekcja zostaje wyłącznie jako zapis legacy/operator interoperability, nie jako rekomendowany model docelowy.
+
 - `monero-arbitra` `ServeEscrow` (`escrow_http`) jest northbound ingress dla UI/klienta.
 - `escrow_http` obsługuje state/API i idempotency, ale nie powinien trzymać sekretów signer sandboxów.
-- Docelowy routing produkcyjny:
+- Legacy routing operatorski:
   - `escrow_http` -> `nxms-escrow-orchestrator` (stan workflow + proposal blob metadata)
   - `nxms-escrow-orchestrator` -> lokalne worker API (`nxms-signer serve`) per sandbox/rola
 - Orchestrator CLI dla proposal persistence (opaque blob):
   - `nxms-escrow-orchestrator proposal store --db-path ... --escrow-id-hex ... --action release|refund --tx-data-hex-file /run/nxms/proposal.hex --txset-hash-hex ...`
   - `nxms-escrow-orchestrator proposal show --db-path ... --escrow-id-hex ...`
-- Orchestrator CLI dla routingu sandbox workerów:
+- Legacy orchestrator CLI dla routingu sandbox workerów:
   - `nxms-escrow-orchestrator worker-route set --db-path ... --escrow-id-hex ... --role seller|arbiter|buyer --endpoint http://127.0.0.1:28090`
   - `nxms-escrow-orchestrator worker-route show --db-path ... --escrow-id-hex ... --role seller|arbiter|buyer`
   - `nxms-escrow-orchestrator integrity check --db-path ... --fail-on-findings` waliduje m.in. izolację ról przez wykrywanie `worker_routes.endpoint_role_collision` (ten sam endpoint przypisany do wielu ról w jednym escrow).
@@ -24,7 +29,7 @@ Last update: 2026-03-10
 - Orchestrator CLI dla cross-sandbox quorum proof:
   - `nxms-escrow-orchestrator quorum-proof set --db-path ... --escrow-id-hex ... --role seller|arbiter --sign-round seller_second|arbiter_first --txset-hash-hex ... --jti ... --req-id ...`
   - `nxms-escrow-orchestrator quorum-proof show --db-path ... --escrow-id-hex ... --role seller|arbiter --sign-round seller_second|arbiter_first --txset-hash-hex ...`
-- `escrow_http` adapter flags:
+- Legacy `escrow_http` adapter flags:
   - `NXMS_ESCROW_HTTP_ORCH_PROPOSAL_STORE=true` włącza write-through do orchestratora dla `tx_data_hex` (release/refund).
   - `NXMS_ESCROW_HTTP_ORCH_PROPOSAL_REQUIRED=true` wymusza fail-closed przy błędzie zapisu.
   - `NXMS_ORCH_BIN` (domyślnie `nxms-escrow-orchestrator`) i `NXMS_ESCROW_HTTP_ORCH_TIMEOUT_SECS` sterują wywołaniem CLI.
@@ -217,7 +222,7 @@ Security posture check:
 Strict argv-hardening reject evidence:
 `scripts/nxms_orch_argv_hardening_check.sh`
 
-Strict fail-closed reject matrix evidence (worker-route strict + split token rejects):
+Strict fail-closed reject matrix evidence (legacy worker-route strict + split token rejects):
 `scripts/nxms_strict_failclosed_rejects.sh`
 
 Governance references:
