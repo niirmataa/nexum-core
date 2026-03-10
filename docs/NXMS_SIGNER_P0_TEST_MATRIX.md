@@ -57,6 +57,10 @@ Scope: `nxms-signer` truth-guarding tests for the canonical `nxms-transport -> n
   `tests/e2e_transport_mailbox.rs::workspace_e2e_transport_mailbox_smoke_roundtrip`
   This test uses the real workspace crates and the real signer startup path.
   It is still a local boundary gate, not proof of cross-host Tor/onion deployment.
+- `workspace-level sign+submit local adapter/component gate`
+  `tests/e2e_sign_submit.rs::workspace_e2e_sign_submit_roundtrip`
+  This test extends the same workspace boundary to the real submit path.
+  It is still a local boundary gate, not proof of cross-host Tor/onion deployment.
 
 ## Real Gate For This Stage
 Run at minimum:
@@ -71,6 +75,7 @@ cargo test -p nxms-signer signer_delivers_approved_response_to_real_mailbox_app 
 cargo test -p nxms-signer transport_mailbox_signer_smoke_flow_uses_real_mailbox_app -- --nocapture
 cargo test -p nxms-signer transport_sign_submit_smoke_flow_uses_real_mailbox_app -- --nocapture
 cargo test --test e2e_transport_mailbox -- --nocapture
+cargo test --test e2e_sign_submit -- --nocapture
 ```
 
 Preferred full signer gate:
