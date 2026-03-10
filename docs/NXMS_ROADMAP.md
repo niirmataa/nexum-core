@@ -78,7 +78,7 @@ Każdy moduł, plik albo feature ma mieć jeden z tagów:
 - [ ] Zrobić lokalne smoke testy na Alpine WSL.
 
 ## Etap 9 — testy E2E
-- [ ] `tests/workspace_smoke.rs`
+- [x] `tests/workspace_smoke.rs`
 - [x] `tests/e2e_transport_mailbox.rs`
 - [x] `tests/e2e_sign_submit.rs`
 - [ ] `tests/e2e_orchestrated_flow.rs`
