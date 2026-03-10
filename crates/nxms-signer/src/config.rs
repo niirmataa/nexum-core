@@ -224,6 +224,17 @@ impl SignerConfig {
         if self.mailbox_url.is_empty() {
             return Err(anyhow!("mailbox_url must not be empty"));
         }
+        let mailbox_url =
+            Url::parse(&self.mailbox_url).map_err(|e| anyhow!("invalid mailbox_url: {}", e))?;
+        if !matches!(mailbox_url.scheme(), "http" | "https") {
+            return Err(anyhow!("mailbox_url scheme must be http|https"));
+        }
+        let mailbox_host = mailbox_url
+            .host_str()
+            .ok_or_else(|| anyhow!("mailbox_url missing host"))?;
+        if !mailbox_host.to_ascii_lowercase().ends_with(".onion") {
+            return Err(anyhow!("mailbox_url host must be .onion"));
+        }
         if let Some(tok) = &mut self.mailbox_token {
             *tok = resolve_secret_value(tok, "mailbox_token")?;
         }
@@ -242,6 +253,25 @@ impl SignerConfig {
             if socks.is_empty() {
                 self.tor_socks5h = None;
             }
+        }
+        let socks = self
+            .tor_socks5h
+            .as_ref()
+            .ok_or_else(|| anyhow!("tor_socks5h is required for onion routing"))?;
+        let socks_url = Url::parse(socks).map_err(|e| anyhow!("invalid tor_socks5h URL: {}", e))?;
+        if socks_url.scheme() != "socks5h" {
+            return Err(anyhow!("tor_socks5h scheme must be socks5h"));
+        }
+        let socks_host = socks_url
+            .host_str()
+            .ok_or_else(|| anyhow!("tor_socks5h missing host"))?;
+        let socks_loopback = socks_host.eq_ignore_ascii_case("localhost")
+            || socks_host
+                .parse::<IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
+        if !socks_loopback {
+            return Err(anyhow!("tor_socks5h host must be loopback"));
         }
 
         self.wallet_rpc.endpoint = self
@@ -400,44 +430,6 @@ impl SignerConfig {
             if !wallet_rpc_password_from_vault_ref {
                 return Err(anyhow!(
                     "production_hardening=true requires wallet_rpc.password to use vault: secret reference"
-                ));
-            }
-            let mailbox_url =
-                Url::parse(&self.mailbox_url).map_err(|e| anyhow!("invalid mailbox_url: {}", e))?;
-            if !matches!(mailbox_url.scheme(), "http" | "https") {
-                return Err(anyhow!(
-                    "production_hardening=true requires mailbox_url scheme http|https"
-                ));
-            }
-            let mailbox_host = mailbox_url
-                .host_str()
-                .ok_or_else(|| anyhow!("mailbox_url missing host"))?;
-            if !mailbox_host.to_ascii_lowercase().ends_with(".onion") {
-                return Err(anyhow!(
-                    "production_hardening=true requires mailbox_url host to be .onion"
-                ));
-            }
-            let socks = self.tor_socks5h.as_ref().ok_or_else(|| {
-                anyhow!("production_hardening=true requires tor_socks5h for onion routing")
-            })?;
-            let socks_url =
-                Url::parse(socks).map_err(|e| anyhow!("invalid tor_socks5h URL: {}", e))?;
-            if socks_url.scheme() != "socks5h" {
-                return Err(anyhow!(
-                    "production_hardening=true requires tor_socks5h scheme socks5h"
-                ));
-            }
-            let socks_host = socks_url
-                .host_str()
-                .ok_or_else(|| anyhow!("tor_socks5h missing host"))?;
-            let socks_loopback = socks_host.eq_ignore_ascii_case("localhost")
-                || socks_host
-                    .parse::<IpAddr>()
-                    .map(|ip| ip.is_loopback())
-                    .unwrap_or(false);
-            if !socks_loopback {
-                return Err(anyhow!(
-                    "production_hardening=true requires tor_socks5h host loopback"
                 ));
             }
             if self.mailbox_token.as_deref().unwrap_or_default().len() < 16 {
@@ -994,53 +986,56 @@ mod tests {
     }
 
     #[test]
-    fn production_hardening_rejects_non_onion_mailbox() {
-        let _guard = env_lock().lock().expect("env lock");
+    fn default_mode_rejects_non_onion_mailbox() {
         let mut cfg = base_cfg();
-        cfg.production_hardening = true;
-        let _vault = apply_production_vault_secrets(&mut cfg);
+        cfg.production_hardening = false;
         cfg.mailbox_url = "http://example.com".to_string();
         let err = cfg.normalize().expect_err("must reject non-onion mailbox");
-        assert!(err.to_string().contains("mailbox_url host to be .onion"));
+        assert!(err.to_string().contains("mailbox_url host must be .onion"));
     }
 
     #[test]
-    fn production_hardening_rejects_non_http_mailbox_scheme() {
-        let _guard = env_lock().lock().expect("env lock");
+    fn default_mode_rejects_non_http_mailbox_scheme() {
         let mut cfg = base_cfg();
-        cfg.production_hardening = true;
-        let _vault = apply_production_vault_secrets(&mut cfg);
+        cfg.production_hardening = false;
         cfg.mailbox_url = "ftp://mailbox.onion".to_string();
         let err = cfg
             .normalize()
             .expect_err("must reject unsupported mailbox scheme");
-        assert!(err.to_string().contains("scheme http|https"));
+        assert!(err.to_string().contains("mailbox_url scheme must be http|https"));
     }
 
     #[test]
-    fn production_hardening_rejects_non_socks5h_scheme() {
-        let _guard = env_lock().lock().expect("env lock");
+    fn default_mode_rejects_missing_tor_socks() {
         let mut cfg = base_cfg();
-        cfg.production_hardening = true;
-        let _vault = apply_production_vault_secrets(&mut cfg);
+        cfg.production_hardening = false;
+        cfg.tor_socks5h = None;
+        let err = cfg
+            .normalize()
+            .expect_err("must reject missing tor socks");
+        assert!(err.to_string().contains("tor_socks5h is required"));
+    }
+
+    #[test]
+    fn default_mode_rejects_non_socks5h_scheme() {
+        let mut cfg = base_cfg();
+        cfg.production_hardening = false;
         cfg.tor_socks5h = Some("socks5://127.0.0.1:9050".to_string());
         let err = cfg
             .normalize()
             .expect_err("must reject tor_socks scheme without host resolution");
-        assert!(err.to_string().contains("scheme socks5h"));
+        assert!(err.to_string().contains("tor_socks5h scheme must be socks5h"));
     }
 
     #[test]
-    fn production_hardening_rejects_non_loopback_socks_host() {
-        let _guard = env_lock().lock().expect("env lock");
+    fn default_mode_rejects_non_loopback_socks_host() {
         let mut cfg = base_cfg();
-        cfg.production_hardening = true;
-        let _vault = apply_production_vault_secrets(&mut cfg);
+        cfg.production_hardening = false;
         cfg.tor_socks5h = Some("socks5h://10.0.0.2:9050".to_string());
         let err = cfg
             .normalize()
             .expect_err("must reject non-loopback tor socks endpoint");
-        assert!(err.to_string().contains("host loopback"));
+        assert!(err.to_string().contains("tor_socks5h host must be loopback"));
     }
 
     #[test]
