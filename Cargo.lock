@@ -987,6 +987,7 @@ dependencies = [
  "jsonwebtoken",
  "libc",
  "md5",
+ "nxms-mailbox",
  "nxms-mailbox-client",
  "nxms-transport",
  "rand 0.8.5",

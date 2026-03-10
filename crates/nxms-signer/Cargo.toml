@@ -27,3 +27,6 @@ tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "signal", "
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+nxms-mailbox = { path = "../nxms-mailbox" }

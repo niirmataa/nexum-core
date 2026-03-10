@@ -12,6 +12,11 @@ use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use nxms_mailbox::{
+    AppState as MailboxAppState, api::ApiConfig as MailboxApiConfig,
+    build_app as build_mailbox_app,
+    db::{MailboxLimits as MailboxDbLimits, SqliteMailboxDb as RealMailboxDb},
+};
 use nxms_transport::crypto::decrypt;
 use nxms_transport::peers::{Peer, PeerBook};
 use nxms_transport::wire::TxSignReqBody;
@@ -233,6 +238,52 @@ async fn spawn_server(router: Router) -> String {
     format!("http://{}", addr)
 }
 
+async fn spawn_real_mailbox_server(label: &str) -> (String, PathBuf) {
+    let db_path = unique_db_path(&format!("real_mailbox_{label}"));
+    let db = RealMailboxDb::new(db_path.clone());
+    db.init().await.expect("real mailbox db init");
+    let state = MailboxAppState::new(
+        db,
+        MailboxApiConfig {
+            push_token: Some("push-token-123456".to_string()),
+            pull_tokens: std::collections::HashMap::from([(
+                "peer1".to_string(),
+                "pull-token-123456".to_string(),
+            )]),
+            ack_tokens: std::collections::HashMap::from([(
+                "peer1".to_string(),
+                "ack-token-123456".to_string(),
+            )]),
+            admin_token: Some("admin-token-123456".to_string()),
+            max_body_bytes: 1024 * 1024,
+            default_ttl_secs: 60,
+            max_ttl_secs: 600,
+            lease_secs: 30,
+            max_wait_ms: 1000,
+            limits: MailboxDbLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            rate_limit_ip_per_min: 1000,
+            rate_limit_to_per_min: 1000,
+        },
+    );
+    let app = build_mailbox_app(state, 1024 * 1024);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await;
+    });
+    (format!("http://{}", addr), db_path)
+}
+
 fn unique_db_path(label: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -321,19 +372,6 @@ async fn make_agent(
     let db = SignerDb::new(db_path);
     db.init().await.expect("db init");
 
-    let mailbox = MailboxClient::builder(&mailbox_url)
-        .expect("mailbox builder")
-        .build()
-        .expect("mailbox client");
-    let wallet = WalletRpcClient::new(
-        wallet_url,
-        "wallet".to_string(),
-        "pass".to_string(),
-        "user".to_string(),
-        "pass".to_string(),
-    )
-    .expect("wallet client");
-
     let cfg = SignerConfig {
         local_id: "local".to_string(),
         signer_role: SignerRole::Arbiter,
@@ -370,6 +408,34 @@ async fn make_agent(
         action_token: None,
         wallet_provision: None,
     };
+
+    let mailbox = MailboxClient::builder(&mailbox_url)
+        .expect("mailbox builder")
+        .push_token(
+            cfg.mailbox_push_token
+                .clone()
+                .expect("push token configured"),
+        )
+        .pull_token(
+            cfg.mailbox_pull_token
+                .clone()
+                .expect("pull token configured"),
+        )
+        .ack_token(
+            cfg.mailbox_ack_token
+                .clone()
+                .expect("ack token configured"),
+        )
+        .build()
+        .expect("mailbox client");
+    let wallet = WalletRpcClient::new(
+        wallet_url,
+        "wallet".to_string(),
+        "pass".to_string(),
+        "user".to_string(),
+        "pass".to_string(),
+    )
+    .expect("wallet client");
 
     SignerAgent {
         cfg,
@@ -2484,6 +2550,90 @@ async fn approve_pending_happy_path_has_expected_side_effects() {
 
     remove_file_quiet(&fixture.key_path);
     remove_file_quiet(&h.db_path);
+}
+
+#[tokio::test]
+async fn signer_delivers_approved_response_to_real_mailbox_app() {
+    let (mailbox_url, mailbox_db_path) = spawn_real_mailbox_server("signer_boundary").await;
+    let wallet_state = Arc::new(WalletMockState::default());
+    let wallet_url = spawn_server(
+        Router::new()
+            .route("/json_rpc", post(wallet_rpc_handler))
+            .with_state(wallet_state.clone()),
+    )
+    .await;
+
+    let local_keys = Keys::generate().expect("local keys");
+    let peer_keys = Keys::generate().expect("peer keys");
+    let signer_db_path = unique_db_path("signer_real_mailbox");
+    let mut agent = make_agent(
+        mailbox_url.clone(),
+        wallet_url,
+        signer_db_path.clone(),
+        clone_keys(&local_keys),
+        clone_keys(&peer_keys),
+    )
+    .await;
+    let fixture = install_action_token_verifier(&mut agent, true, "real-mailbox-boundary");
+
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&agent.db, escrow_id_hex).await;
+    let snapshot_hash = canonical_hash_hex(&snapshot).expect("snapshot hash");
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+    let txset_hash = txset_sha256_hex("aa11").expect("txset hash");
+    let id = enqueue_pending(
+        &agent,
+        escrow_id_hex,
+        1,
+        "pending",
+        &snapshot_hash,
+        txset_hash.clone(),
+    )
+    .await;
+
+    let token = build_sign_action_token(
+        &agent,
+        &fixture,
+        escrow_id_hex,
+        &txset_hash,
+        &snapshot_hash_for_token,
+        "jti-real-mailbox-boundary",
+    );
+    agent
+        .approve_pending(id, Some(&token))
+        .await
+        .expect("approve through real mailbox");
+
+    let mailbox_client = MailboxClient::builder(&mailbox_url)
+        .expect("mailbox builder")
+        .pull_token("pull-token-123456")
+        .ack_token("ack-token-123456")
+        .admin_token("admin-token-123456")
+        .build()
+        .expect("mailbox client");
+
+    let pulled = mailbox_client
+        .pull("peer1", Some(1), Some(0))
+        .await
+        .expect("pull real mailbox response");
+    assert_eq!(pulled.messages.len(), 1);
+    let body = decode_push_body(&serde_json::json!({"envelope": pulled.messages[0].envelope}), &local_keys, &peer_keys);
+    let EscrowBody::TxSignResp(resp) = body else {
+        panic!("expected TxSignResp body");
+    };
+    assert!(resp.approved);
+    assert_eq!(resp.signed_tx_data_hex.as_deref(), Some("aa11"));
+
+    mailbox_client
+        .ack(&pulled.messages[0].receipt)
+        .await
+        .expect("ack real mailbox response");
+    let stats = mailbox_client.admin_stats().await.expect("admin stats");
+    assert_eq!(stats.total_rows, 0);
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&signer_db_path);
+    remove_file_quiet(&mailbox_db_path);
 }
 
 #[tokio::test]

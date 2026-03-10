@@ -6,12 +6,12 @@ use rand::RngCore;
 use rusqlite::{Connection, ErrorCode, OptionalExtension, TransactionBehavior, params};
 
 #[derive(Clone)]
-pub(crate) struct SqliteMailboxDb {
+pub struct SqliteMailboxDb {
     path: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct MailboxLimits {
+pub struct MailboxLimits {
     pub max_messages_per_inbox: u64,
     pub max_bytes_per_inbox: u64,
     pub max_rows_global: u64,
@@ -53,11 +53,11 @@ pub(crate) struct InboxStats {
 }
 
 impl SqliteMailboxDb {
-    pub(crate) fn new(path: PathBuf) -> Self {
+    pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
-    pub(crate) async fn init(&self) -> Result<(), String> {
+    pub async fn init(&self) -> Result<(), String> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || init_sync(&path))
             .await
@@ -99,7 +99,7 @@ impl SqliteMailboxDb {
             .map_err(|e| e.to_string())?
     }
 
-    pub(crate) async fn cleanup_expired(&self) -> Result<(), String> {
+    pub async fn cleanup_expired(&self) -> Result<(), String> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || cleanup_expired_sync(&path))
             .await
@@ -113,14 +113,14 @@ impl SqliteMailboxDb {
             .map_err(|e| e.to_string())?
     }
 
-    pub(crate) async fn wal_checkpoint_truncate(&self) -> Result<(), String> {
+    pub async fn wal_checkpoint_truncate(&self) -> Result<(), String> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || wal_checkpoint_truncate_sync(&path))
             .await
             .map_err(|e| e.to_string())?
     }
 
-    pub(crate) async fn vacuum(&self) -> Result<(), String> {
+    pub async fn vacuum(&self) -> Result<(), String> {
         let path = self.path.clone();
         tokio::task::spawn_blocking(move || vacuum_sync(&path))
             .await

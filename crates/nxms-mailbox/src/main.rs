@@ -1,18 +1,10 @@
-mod api;
-mod db;
-
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use axum::Router;
-use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
 use clap::{Parser, Subcommand};
-use tokio::sync::Notify;
-use tower_http::trace::TraceLayer;
+use nxms_mailbox::{AppState, api, build_app, db};
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -134,106 +126,6 @@ enum Command {
     },
 }
 
-#[derive(Clone)]
-struct AppState {
-    db: db::SqliteMailboxDb,
-    cfg: api::ApiConfig,
-    notify: Arc<NotifyMap>,
-    rate_limits: Arc<RateLimits>,
-}
-
-fn build_app(state: AppState, max_body_bytes: usize) -> Router {
-    Router::new()
-        .route("/health", get(api::health))
-        .route("/v1/push", post(api::push))
-        .route("/v1/pull", post(api::pull))
-        .route("/v1/ack", post(api::ack))
-        .route("/v1/admin/stats", get(api::admin_stats))
-        .layer(TraceLayer::new_for_http())
-        .layer(DefaultBodyLimit::max(max_body_bytes))
-        .with_state(state)
-}
-
-#[derive(Default)]
-struct NotifyMap {
-    inner: Mutex<HashMap<String, Arc<Notify>>>,
-}
-
-impl NotifyMap {
-    fn inbox(&self, to: &str) -> Arc<Notify> {
-        let mut lock = self.inner.lock().expect("notify map lock");
-        lock.entry(to.to_string())
-            .or_insert_with(|| Arc::new(Notify::new()))
-            .clone()
-    }
-
-    fn notify_inbox(&self, to: &str) {
-        let n = self.inbox(to);
-        n.notify_waiters();
-    }
-}
-
-#[derive(Default)]
-struct FixedWindowLimiter {
-    inner: Mutex<HashMap<String, WindowCounter>>,
-}
-
-#[derive(Clone, Copy)]
-struct WindowCounter {
-    started_at: u64,
-    count: u32,
-}
-
-impl FixedWindowLimiter {
-    fn check(&self, key: &str, limit_per_min: u32, now: u64) -> Option<u64> {
-        if limit_per_min == 0 || key.trim().is_empty() {
-            return None;
-        }
-        let mut lock = self.inner.lock().expect("rate limiter lock");
-        let counter = lock.entry(key.to_string()).or_insert(WindowCounter {
-            started_at: now,
-            count: 0,
-        });
-        if now.saturating_sub(counter.started_at) >= 60 {
-            counter.started_at = now;
-            counter.count = 0;
-        }
-        if counter.count >= limit_per_min {
-            let elapsed = now.saturating_sub(counter.started_at).min(60);
-            return Some(60 - elapsed);
-        }
-        counter.count = counter.count.saturating_add(1);
-
-        if lock.len() > 50_000 {
-            lock.retain(|_, v| now.saturating_sub(v.started_at) < 120);
-        }
-        None
-    }
-}
-
-#[derive(Default)]
-struct RateLimits {
-    by_ip: FixedWindowLimiter,
-    by_to: FixedWindowLimiter,
-}
-
-impl RateLimits {
-    fn check_ip(&self, ip: &str, limit_per_min: u32) -> Option<u64> {
-        self.by_ip.check(ip, limit_per_min, now_secs())
-    }
-
-    fn check_to(&self, to: &str, limit_per_min: u32) -> Option<u64> {
-        self.by_to.check(to, limit_per_min, now_secs())
-    }
-}
-
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 fn require_token(name: &str, value: Option<String>) -> Result<String, Box<dyn std::error::Error>> {
     let token = value
         .map(|v| v.trim().to_string())
@@ -342,14 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 rate_limit_to_per_min,
             };
 
-            let notify = Arc::new(NotifyMap::default());
-            let rate_limits = Arc::new(RateLimits::default());
-            let state = AppState {
-                db: db.clone(),
-                cfg,
-                notify: notify.clone(),
-                rate_limits,
-            };
+            let state = AppState::new(db.clone(), cfg);
 
             // Periodic cleanup loop (expired messages).
             tokio::spawn(async move {
@@ -480,9 +365,9 @@ mod tests {
         let db = db::SqliteMailboxDb::new(db_path.clone());
         db.init().await.expect("db init");
 
-        let state = AppState {
+        let state = AppState::new(
             db,
-            cfg: api::ApiConfig {
+            api::ApiConfig {
                 push_token: Some("push-token".to_string()),
                 pull_tokens: HashMap::from([
                     ("bob".to_string(), "pull-token-bob".to_string()),
@@ -506,9 +391,7 @@ mod tests {
                 rate_limit_ip_per_min: 1000,
                 rate_limit_to_per_min: 1000,
             },
-            notify: Arc::new(NotifyMap::default()),
-            rate_limits: Arc::new(RateLimits::default()),
-        };
+        );
         let app = build_app(state, 1024 * 1024);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -531,9 +414,9 @@ mod tests {
         let db = db::SqliteMailboxDb::new(db_path.clone());
         db.init().await.expect("db init");
 
-        let state = AppState {
+        let state = AppState::new(
             db,
-            cfg: api::ApiConfig {
+            api::ApiConfig {
                 push_token: Some("push-token".to_string()),
                 pull_tokens: HashMap::from([("bob".to_string(), "pull-token-bob".to_string())]),
                 ack_tokens: HashMap::from([("bob".to_string(), "ack-token-bob".to_string())]),
@@ -551,9 +434,7 @@ mod tests {
                 rate_limit_ip_per_min: 1000,
                 rate_limit_to_per_min: 1000,
             },
-            notify: Arc::new(NotifyMap::default()),
-            rate_limits: Arc::new(RateLimits::default()),
-        };
+        );
         let app = build_app(state, 256);
 
         let huge = "A".repeat(2048);

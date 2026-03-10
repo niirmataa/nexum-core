@@ -17,7 +17,7 @@ use crate::db::{MailboxLimits, PushRejection};
 const AUTH_HEADER_COMPARE_MAX_LEN: usize = 1024;
 
 #[derive(Clone, Debug)]
-pub(crate) struct ApiConfig {
+pub struct ApiConfig {
     pub push_token: Option<String>,
     pub pull_tokens: HashMap<String, String>,
     pub ack_tokens: HashMap<String, String>,
