@@ -90,10 +90,11 @@ impl SqliteMailboxDb {
             .map_err(|e| e.to_string())?
     }
 
-    pub(crate) async fn ack(&self, receipt: &str) -> Result<bool, String> {
+    pub(crate) async fn ack(&self, receipt: &str, to: &str) -> Result<bool, String> {
         let path = self.path.clone();
         let receipt = receipt.to_string();
-        tokio::task::spawn_blocking(move || ack_sync(&path, &receipt))
+        let to = to.to_string();
+        tokio::task::spawn_blocking(move || ack_sync(&path, &receipt, &to))
             .await
             .map_err(|e| e.to_string())?
     }
@@ -386,10 +387,13 @@ fn pull_sync(
     Ok(out)
 }
 
-fn ack_sync(path: &PathBuf, receipt: &str) -> Result<bool, String> {
+fn ack_sync(path: &PathBuf, receipt: &str, to: &str) -> Result<bool, String> {
     let conn = open(path)?;
     let n = conn
-        .execute("DELETE FROM messages WHERE lease_id=?1", params![receipt])
+        .execute(
+            "DELETE FROM messages WHERE lease_id=?1 AND to_id=?2",
+            params![receipt, to],
+        )
         .map_err(|e| e.to_string())?;
     Ok(n > 0)
 }
@@ -590,7 +594,7 @@ mod tests {
         let leased2 = db.pull("bob", 10, 60).await.expect("pull2");
         assert!(leased2.is_empty());
 
-        db.ack(&leased[0].receipt).await.expect("ack");
+        db.ack(&leased[0].receipt, "bob").await.expect("ack");
 
         let leased3 = db.pull("bob", 10, 60).await.expect("pull3");
         assert!(leased3.is_empty());
@@ -679,6 +683,64 @@ mod tests {
         assert!(!r3.dedup);
         let r4 = db.push(&env1, 60, default_limits()).await.expect("push4");
         assert!(r4.dedup);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn ack_requires_matching_inbox_scope() {
+        let db_path = unique_db_path("ack_scope");
+        let db = SqliteMailboxDb::new(db_path.clone());
+        db.init().await.expect("init");
+
+        db.push(&sample_env("bob", 1), 60, default_limits())
+            .await
+            .expect("push");
+
+        let leased = db.pull("bob", 10, 60).await.expect("pull");
+        assert_eq!(leased.len(), 1);
+
+        let wrong_ack = db
+            .ack(&leased[0].receipt, "carol")
+            .await
+            .expect("wrong scoped ack");
+        assert!(!wrong_ack);
+
+        let leased_again = db.pull("bob", 10, 1).await.expect("pull while leased");
+        assert!(leased_again.is_empty());
+
+        let correct_ack = db
+            .ack(&leased[0].receipt, "bob")
+            .await
+            .expect("correct scoped ack");
+        assert!(correct_ack);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn restart_recovery_redelivers_leased_message_after_reopen() {
+        let db_path = unique_db_path("restart_recovery");
+        let db = SqliteMailboxDb::new(db_path.clone());
+        db.init().await.expect("init");
+
+        db.push(&sample_env("bob", 1), 60, default_limits())
+            .await
+            .expect("push");
+
+        let leased = db.pull("bob", 10, 1).await.expect("pull");
+        assert_eq!(leased.len(), 1);
+        let first_receipt = leased[0].receipt.clone();
+
+        drop(db);
+        sleep(Duration::from_millis(1200)).await;
+
+        let reopened = SqliteMailboxDb::new(db_path.clone());
+        reopened.init().await.expect("reopen init");
+        let redelivered = reopened.pull("bob", 10, 1).await.expect("pull after restart");
+        assert_eq!(redelivered.len(), 1);
+        assert_eq!(redelivered[0].envelope.seq, 1);
+        assert_ne!(redelivered[0].receipt, first_receipt);
 
         let _ = std::fs::remove_file(db_path);
     }

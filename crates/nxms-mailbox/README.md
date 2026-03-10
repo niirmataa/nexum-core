@@ -17,11 +17,13 @@ Required auth tokens:
 
 ```sh
 NXMS_MAILBOX_PUSH_TOKEN='push-secret' \
-NXMS_MAILBOX_PULL_TOKEN='pull-secret' \
-NXMS_MAILBOX_ACK_TOKEN='ack-secret' \
+NXMS_MAILBOX_PULL_TOKENS='buyer=pull-buyer,seller=pull-seller,arbiter=pull-arbiter' \
+NXMS_MAILBOX_ACK_TOKENS='buyer=ack-buyer,seller=ack-seller,arbiter=ack-arbiter' \
 NXMS_MAILBOX_ADMIN_TOKEN='admin-secret' \
   cargo run --release -- serve --bind 127.0.0.1:4010 --db-path /var/lib/nxms-mailbox/mailbox.db
 ```
+
+`pull` and `ack` are fail-closed per inbox scope. A token for `seller` must not be accepted for `buyer`, and `ack` deletes only a leased receipt that belongs to the authorized inbox.
 
 ## Tor onion service (example)
 
@@ -42,7 +44,7 @@ HiddenServicePort 4010 127.0.0.1:4010
 Delivery semantics:
 
 - `pull` leases messages for `NXMS_MAILBOX_LEASE_SECS` and returns a `receipt`.
-- `ack` deletes the message for that receipt.
+- `ack` deletes the message for that receipt only within the inbox scope bound to the presented ack token.
 - If the client dies after `pull` but before `ack`, the message becomes visible again after the lease expires.
 
 ## Replay / Idempotency

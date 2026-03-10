@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use axum::Json;
@@ -18,8 +19,8 @@ const AUTH_HEADER_COMPARE_MAX_LEN: usize = 1024;
 #[derive(Clone, Debug)]
 pub(crate) struct ApiConfig {
     pub push_token: Option<String>,
-    pub pull_token: Option<String>,
-    pub ack_token: Option<String>,
+    pub pull_tokens: HashMap<String, String>,
+    pub ack_tokens: HashMap<String, String>,
     pub admin_token: Option<String>,
     pub max_body_bytes: usize,
     pub default_ttl_secs: u64,
@@ -215,10 +216,9 @@ pub(crate) async fn pull(
     headers: HeaderMap,
     Json(req): Json<PullRequest>,
 ) -> Result<Json<PullResponse>, ApiError> {
-    require_pull_auth(&state.cfg, &headers)?;
-
     validate_peer_id(&req.to)
         .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("invalid to: {e}")))?;
+    require_pull_auth_for_inbox(&state.cfg, &headers, &req.to)?;
 
     let max = req.max.unwrap_or(10).clamp(1, 50);
     let mut wait_ms = req.wait_ms.unwrap_or(0);
@@ -268,7 +268,11 @@ pub(crate) async fn ack(
     headers: HeaderMap,
     Json(req): Json<AckRequest>,
 ) -> Result<Json<AckResponse>, ApiError> {
-    require_ack_auth(&state.cfg, &headers)?;
+    let authorized_inbox = authorized_inbox_for_token(
+        &state.cfg.ack_tokens,
+        &headers,
+        "ack auth is not configured",
+    )?;
 
     let receipt = req.receipt.trim();
     if receipt.is_empty() {
@@ -280,7 +284,7 @@ pub(crate) async fn ack(
 
     let ok = state
         .db
-        .ack(receipt)
+        .ack(receipt, &authorized_inbox)
         .await
         .map_err(|e| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
@@ -350,20 +354,44 @@ fn require_push_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiErro
     )
 }
 
-fn require_pull_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
-    require_bearer(
-        cfg.pull_token.as_deref(),
-        headers,
-        "pull auth is not configured",
-    )
+fn require_pull_auth_for_inbox(
+    cfg: &ApiConfig,
+    headers: &HeaderMap,
+    inbox: &str,
+) -> Result<(), ApiError> {
+    let Some(token) = cfg.pull_tokens.get(inbox) else {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "inbox is not authorized for pull",
+        ));
+    };
+    require_bearer(Some(token.as_str()), headers, "pull auth is not configured")
 }
 
-fn require_ack_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
-    require_bearer(
-        cfg.ack_token.as_deref(),
-        headers,
-        "ack auth is not configured",
-    )
+fn authorized_inbox_for_token(
+    tokens: &HashMap<String, String>,
+    headers: &HeaderMap,
+    missing_detail: &'static str,
+) -> Result<String, ApiError> {
+    if tokens.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            missing_detail,
+        ));
+    }
+
+    let auth = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    for (inbox, token) in tokens {
+        let want = format!("Bearer {}", token);
+        if timing_safe_eq_fixed::<AUTH_HEADER_COMPARE_MAX_LEN>(auth, &want) {
+            return Ok(inbox.clone());
+        }
+    }
+
+    Err(ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized"))
 }
 
 fn require_admin_auth(cfg: &ApiConfig, headers: &HeaderMap) -> Result<(), ApiError> {
@@ -455,6 +483,7 @@ mod tests {
     use crate::db::SqliteMailboxDb;
     use crate::{NotifyMap, RateLimits};
     use nxms_transport::wire::{MsgType, NXMS_PROTO_V1};
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -501,8 +530,14 @@ mod tests {
             db,
             cfg: ApiConfig {
                 push_token: Some("push-token".to_string()),
-                pull_token: Some("pull-token".to_string()),
-                ack_token: Some("ack-token".to_string()),
+                pull_tokens: HashMap::from([
+                    ("bob".to_string(), "pull-token-bob".to_string()),
+                    ("carol".to_string(), "pull-token-carol".to_string()),
+                ]),
+                ack_tokens: HashMap::from([
+                    ("bob".to_string(), "ack-token-bob".to_string()),
+                    ("carol".to_string(), "ack-token-carol".to_string()),
+                ]),
                 admin_token: Some("admin".to_string()),
                 max_body_bytes: 1024 * 1024,
                 default_ttl_secs: 60,
@@ -706,6 +741,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn smoke_push_pull_ack_roundtrip_via_api() {
+        let db_path = unique_db_path("smoke_roundtrip");
+        let state = make_state(
+            db_path.clone(),
+            MailboxLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            1000,
+            1000,
+        )
+        .await;
+
+        let mut push_headers = HeaderMap::new();
+        push_headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer push-token"),
+        );
+        let push_req = PushRequest {
+            envelope: sample_envelope("bob", 1),
+            ttl_secs: Some(60),
+        };
+        let pushed = push(
+            State(state.clone()),
+            Some(ConnectInfo(
+                "127.0.0.1:40127"
+                    .parse::<std::net::SocketAddr>()
+                    .expect("addr"),
+            )),
+            push_headers,
+            Bytes::from(serde_json::to_vec(&push_req).expect("push json")),
+        )
+        .await
+        .expect("push ok");
+        assert!(pushed.0.ok);
+        assert!(!pushed.0.dedup);
+
+        let mut pull_headers = HeaderMap::new();
+        pull_headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer pull-token-bob"),
+        );
+        let pulled = pull(
+            State(state.clone()),
+            pull_headers,
+            Json(PullRequest {
+                to: "bob".to_string(),
+                max: Some(1),
+                wait_ms: Some(0),
+            }),
+        )
+        .await
+        .expect("pull ok");
+        assert_eq!(pulled.0.messages.len(), 1);
+        assert_eq!(pulled.0.messages[0].envelope.seq, 1);
+
+        let mut ack_headers = HeaderMap::new();
+        ack_headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer ack-token-bob"),
+        );
+        let acked = ack(
+            State(state.clone()),
+            ack_headers,
+            Json(AckRequest {
+                receipt: pulled.0.messages[0].receipt.clone(),
+            }),
+        )
+        .await
+        .expect("ack ok");
+        assert!(acked.0.ok);
+
+        let mut pull_headers_again = HeaderMap::new();
+        pull_headers_again.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer pull-token-bob"),
+        );
+        let empty = pull(
+            State(state),
+            pull_headers_again,
+            Json(PullRequest {
+                to: "bob".to_string(),
+                max: Some(1),
+                wait_ms: Some(0),
+            }),
+        )
+        .await
+        .expect("pull after ack");
+        assert!(empty.0.messages.is_empty());
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn pull_rejects_push_token() {
         let db_path = unique_db_path("pull_wrong_scope");
         let state = make_state(
@@ -741,6 +871,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pull_rejects_unconfigured_inbox_even_with_valid_other_scope_token() {
+        let db_path = unique_db_path("pull_unconfigured_inbox");
+        let state = make_state(
+            db_path.clone(),
+            MailboxLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            1000,
+            1000,
+        )
+        .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer pull-token-bob"),
+        );
+        let err = pull(
+            State(state),
+            headers,
+            Json(PullRequest {
+                to: "mallory".to_string(),
+                max: Some(1),
+                wait_ms: Some(0),
+            }),
+        )
+        .await
+        .expect_err("unconfigured inbox must be fail-closed");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn ack_rejects_pull_token() {
         let db_path = unique_db_path("ack_wrong_scope");
         let state = make_state(
@@ -758,7 +923,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::AUTHORIZATION,
-            HeaderValue::from_static("Bearer pull-token"),
+            HeaderValue::from_static("Bearer pull-token-bob"),
         );
         let err = ack(
             State(state),
@@ -770,6 +935,137 @@ mod tests {
         .await
         .expect_err("pull token must not authorize ack");
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn pull_rejects_token_for_other_inbox() {
+        let db_path = unique_db_path("pull_other_inbox");
+        let state = make_state(
+            db_path.clone(),
+            MailboxLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            1000,
+            1000,
+        )
+        .await;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer pull-token-carol"),
+        );
+        let err = pull(
+            State(state),
+            headers,
+            Json(PullRequest {
+                to: "bob".to_string(),
+                max: Some(1),
+                wait_ms: Some(0),
+            }),
+        )
+        .await
+        .expect_err("wrong inbox token must not authorize pull");
+        assert_eq!(err.status, StatusCode::UNAUTHORIZED);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn pull_accepts_only_matching_inbox_token() {
+        let db_path = unique_db_path("pull_matching_inbox");
+        let state = make_state(
+            db_path.clone(),
+            MailboxLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            1000,
+            1000,
+        )
+        .await;
+
+        state
+            .db
+            .push(&sample_envelope("bob", 1), 60, state.cfg.limits)
+            .await
+            .expect("push");
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer pull-token-bob"),
+        );
+        let response = pull(
+            State(state),
+            headers,
+            Json(PullRequest {
+                to: "bob".to_string(),
+                max: Some(1),
+                wait_ms: Some(0),
+            }),
+        )
+        .await
+        .expect("matching pull token");
+        assert_eq!(response.0.messages.len(), 1);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn ack_is_scoped_to_receipt_inbox() {
+        let db_path = unique_db_path("ack_scoped");
+        let state = make_state(
+            db_path.clone(),
+            MailboxLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            1000,
+            1000,
+        )
+        .await;
+
+        state
+            .db
+            .push(&sample_envelope("bob", 1), 60, state.cfg.limits)
+            .await
+            .expect("push");
+        let leased = state.db.pull("bob", 1, 30).await.expect("pull");
+        let receipt = leased[0].receipt.clone();
+
+        let mut wrong_headers = HeaderMap::new();
+        wrong_headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer ack-token-carol"),
+        );
+        let err = ack(
+            State(state.clone()),
+            wrong_headers,
+            Json(AckRequest {
+                receipt: receipt.clone(),
+            }),
+        )
+        .await
+        .expect_err("wrong inbox ack token must fail");
+        assert_eq!(err.status, StatusCode::NOT_FOUND);
+
+        let mut correct_headers = HeaderMap::new();
+        correct_headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer ack-token-bob"),
+        );
+        let response = ack(
+            State(state),
+            correct_headers,
+            Json(AckRequest { receipt }),
+        )
+        .await
+        .expect("correct inbox ack token");
+        assert!(response.0.ok);
         let _ = std::fs::remove_file(db_path);
     }
 }

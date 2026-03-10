@@ -83,6 +83,7 @@ Każdy moduł, plik albo feature ma mieć jeden z tagów:
 - [ ] `tests/e2e_sign_submit.rs`
 - [ ] `tests/e2e_orchestrated_flow.rs`
 - [x] Zdefiniować i utrzymywać P0 truth matrix dla `nxms-signer` w `docs/NXMS_SIGNER_P0_TEST_MATRIX.md`.
+- [x] Zdefiniować i utrzymywać P0 truth matrix dla `nxms-mailbox` w `docs/NXMS_MAILBOX_P0_TEST_MATRIX.md`.
 
 ## Etap 10 — release criteria
 - [ ] Każda większa zmiana ma decyzję w docs.

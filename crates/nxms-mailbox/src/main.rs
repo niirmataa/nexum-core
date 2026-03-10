@@ -62,13 +62,13 @@ enum Command {
         #[arg(long, env = "NXMS_MAILBOX_PUSH_TOKEN")]
         push_token: Option<String>,
 
-        /// Bearer token required for /v1/pull.
-        #[arg(long, env = "NXMS_MAILBOX_PULL_TOKEN")]
-        pull_token: Option<String>,
+        /// Comma-separated inbox=token map required for /v1/pull.
+        #[arg(long, env = "NXMS_MAILBOX_PULL_TOKENS")]
+        pull_tokens: Option<String>,
 
-        /// Bearer token required for /v1/ack.
-        #[arg(long, env = "NXMS_MAILBOX_ACK_TOKEN")]
-        ack_token: Option<String>,
+        /// Comma-separated inbox=token map required for /v1/ack.
+        #[arg(long, env = "NXMS_MAILBOX_ACK_TOKENS")]
+        ack_tokens: Option<String>,
 
         /// Bearer token required for /v1/admin/* endpoints.
         #[arg(long, env = "NXMS_MAILBOX_ADMIN_TOKEN")]
@@ -242,6 +242,48 @@ fn require_token(name: &str, value: Option<String>) -> Result<String, Box<dyn st
     Ok(token)
 }
 
+fn require_scoped_tokens(
+    name: &str,
+    value: Option<String>,
+) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
+    let raw = value
+        .ok_or_else(|| format!("{name} must be set and non-empty"))?
+        .trim()
+        .to_string();
+    if raw.is_empty() {
+        return Err(format!("{name} must be set and non-empty").into());
+    }
+
+    let mut tokens = HashMap::new();
+    let mut seen_token_values = std::collections::HashSet::new();
+    for entry in raw.split(',') {
+        let entry = entry.trim();
+        if entry.is_empty() {
+            return Err(format!("{name} contains an empty entry").into());
+        }
+        let (inbox, token) = entry
+            .split_once('=')
+            .ok_or_else(|| format!("{name} entries must have inbox=token format"))?;
+        let inbox = inbox.trim();
+        let token = token.trim();
+        if inbox.is_empty() || token.is_empty() {
+            return Err(format!("{name} entries must have non-empty inbox and token").into());
+        }
+        if tokens.insert(inbox.to_string(), token.to_string()).is_some() {
+            return Err(format!("{name} contains duplicate inbox `{inbox}`").into());
+        }
+        if !seen_token_values.insert(token.to_string()) {
+            return Err(format!("{name} reuses the same token across inbox scopes").into());
+        }
+    }
+
+    if tokens.is_empty() {
+        return Err(format!("{name} must define at least one inbox token").into());
+    }
+
+    Ok(tokens)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -261,8 +303,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             lease_secs,
             max_wait_ms,
             push_token,
-            pull_token,
-            ack_token,
+            pull_tokens,
+            ack_tokens,
             admin_token,
             cleanup_secs,
             checkpoint_secs,
@@ -277,14 +319,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db = db::SqliteMailboxDb::new(db_path);
             db.init().await?;
             let push_token = require_token("NXMS_MAILBOX_PUSH_TOKEN", push_token)?;
-            let pull_token = require_token("NXMS_MAILBOX_PULL_TOKEN", pull_token)?;
-            let ack_token = require_token("NXMS_MAILBOX_ACK_TOKEN", ack_token)?;
+            let pull_tokens = require_scoped_tokens("NXMS_MAILBOX_PULL_TOKENS", pull_tokens)?;
+            let ack_tokens = require_scoped_tokens("NXMS_MAILBOX_ACK_TOKENS", ack_tokens)?;
             let admin_token = require_token("NXMS_MAILBOX_ADMIN_TOKEN", admin_token)?;
 
             let cfg = api::ApiConfig {
                 push_token: Some(push_token),
-                pull_token: Some(pull_token),
-                ack_token: Some(ack_token),
+                pull_tokens,
+                ack_tokens,
                 admin_token: Some(admin_token),
                 max_body_bytes,
                 default_ttl_secs,
@@ -373,6 +415,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn require_scoped_tokens_parses_and_rejects_bad_values() {
+        let parsed = require_scoped_tokens(
+            "NXMS_MAILBOX_PULL_TOKENS",
+            Some("alice = token-a, bob=token-b".to_string()),
+        )
+        .expect("scoped tokens");
+        assert_eq!(parsed.get("alice"), Some(&"token-a".to_string()));
+        assert_eq!(parsed.get("bob"), Some(&"token-b".to_string()));
+
+        assert!(require_scoped_tokens("NXMS_MAILBOX_PULL_TOKENS", None).is_err());
+        assert!(require_scoped_tokens(
+            "NXMS_MAILBOX_PULL_TOKENS",
+            Some("alice=".to_string())
+        )
+        .is_err());
+        assert!(require_scoped_tokens(
+            "NXMS_MAILBOX_PULL_TOKENS",
+            Some("alice=shared,bob=shared".to_string())
+        )
+        .is_err());
+        assert!(require_scoped_tokens(
+            "NXMS_MAILBOX_PULL_TOKENS",
+            Some("alice=a,alice=b".to_string())
+        )
+        .is_err());
+    }
+
     fn unique_db_path(label: &str) -> PathBuf {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -395,8 +465,8 @@ mod tests {
             db,
             cfg: api::ApiConfig {
                 push_token: Some("push-token".to_string()),
-                pull_token: Some("pull-token".to_string()),
-                ack_token: Some("ack-token".to_string()),
+                pull_tokens: HashMap::from([("bob".to_string(), "pull-token-bob".to_string())]),
+                ack_tokens: HashMap::from([("bob".to_string(), "ack-token-bob".to_string())]),
                 admin_token: Some("admin".to_string()),
                 max_body_bytes: 256,
                 default_ttl_secs: 60,
