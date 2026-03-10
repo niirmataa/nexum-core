@@ -671,7 +671,7 @@ fn init_sync(path: &PathBuf) -> Result<()> {
             multisig_txset_hex   TEXT NOT NULL,
             txset_hash_hex       TEXT NOT NULL,
             describe_transfer_json TEXT NOT NULL,
-            status               TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'approved_sending', 'approved_sent', 'rejected_sending', 'rejected', 'error')),
+            status               TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'approved_sending', 'approved_sent', 'rejected_sending', 'rejected', 'failed_dead_letter')),
             decision_reason      TEXT,
             created_at_ms        INTEGER NOT NULL,
             updated_at_ms        INTEGER NOT NULL,
@@ -761,6 +761,7 @@ fn migrate_pending_tx_sign_schema_sync(conn: &mut Connection) -> Result<()> {
     if create_sql_lc.contains("approved_sending")
         && create_sql_lc.contains("approved_sent")
         && create_sql_lc.contains("rejected_sending")
+        && create_sql_lc.contains("failed_dead_letter")
     {
         return Ok(());
     }
@@ -779,7 +780,7 @@ fn migrate_pending_tx_sign_schema_sync(conn: &mut Connection) -> Result<()> {
             multisig_txset_hex   TEXT NOT NULL,
             txset_hash_hex       TEXT NOT NULL,
             describe_transfer_json TEXT NOT NULL,
-            status               TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'approved_sending', 'approved_sent', 'rejected_sending', 'rejected', 'error')),
+            status               TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'approved_sending', 'approved_sent', 'rejected_sending', 'rejected', 'failed_dead_letter')),
             decision_reason      TEXT,
             created_at_ms        INTEGER NOT NULL,
             updated_at_ms        INTEGER NOT NULL,
@@ -795,6 +796,7 @@ fn migrate_pending_tx_sign_schema_sync(conn: &mut Connection) -> Result<()> {
             snapshot_hash_hex, multisig_txset_hex, txset_hash_hex, describe_transfer_json,
             CASE
                 WHEN status='approved' THEN 'approved_sent'
+                WHEN status='error' THEN 'failed_dead_letter'
                 ELSE status
             END,
             decision_reason, created_at_ms, updated_at_ms
@@ -2563,6 +2565,10 @@ mod tests {
                     '00112233445566778899aabbccddeeff', 'peer1', 'local', 1, '\"release\"',
                     '11', 'aa11', '22', '{}',
                     'approved', NULL, 1, 1
+                ),(
+                    'ffeeddccbbaa99887766554433221100', 'peer2', 'local', 2, '\"refund\"',
+                    '33', 'bb22', '44', '{}',
+                    'error', 'legacy dead letter', 2, 2
                 );
                 "#,
             )
@@ -2573,6 +2579,8 @@ mod tests {
         db.init().await.expect("init with migration");
         let row = db.get_pending(1).await.expect("get pending").expect("row");
         assert_eq!(row.status, "approved_sent");
+        let row = db.get_pending(2).await.expect("get pending").expect("row");
+        assert_eq!(row.status, "failed_dead_letter");
 
         db.set_pending_status(1, "approved_sending", Some("{\"k\":\"v\"}"))
             .await

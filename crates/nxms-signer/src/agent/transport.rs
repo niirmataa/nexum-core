@@ -316,11 +316,11 @@ impl SignerAgent {
     pub(crate) async fn mark_pending_error(&self, pending: &PendingTxSign, detail: &str) {
         if let Err(err) = self
             .db
-            .set_pending_status(pending.id, "error", Some(detail))
+            .set_pending_status(pending.id, "failed_dead_letter", Some(detail))
             .await
         {
             warn!(
-                "failed to set pending error status for id {}: {}",
+                "failed to set pending dead-letter status for id {}: {}",
                 pending.id, err
             );
         }
@@ -332,7 +332,7 @@ impl SignerAgent {
             seq: Some(pending.seq),
             envelope_hash_hex: None,
             payload_hash_hex: Some(&pending.txset_hash_hex),
-            decision: Some("error"),
+            decision: Some("dead_letter"),
             detail: Some(detail),
         })
         .await;

@@ -87,6 +87,8 @@ struct TestHarness {
     local_keys: Keys,
     peer_keys: Keys,
     db_path: PathBuf,
+    mailbox_url: String,
+    wallet_url: String,
 }
 
 async fn mailbox_push_handler(
@@ -497,8 +499,8 @@ async fn setup_harness(label: &str) -> TestHarness {
     .expect("deserialize peer keys");
     let db_path = unique_db_path(label);
     let agent = make_agent(
-        mailbox_url,
-        wallet_url,
+        mailbox_url.clone(),
+        wallet_url.clone(),
         db_path.clone(),
         local_keys_for_agent,
         peer_keys_for_agent,
@@ -512,7 +514,18 @@ async fn setup_harness(label: &str) -> TestHarness {
         local_keys,
         peer_keys,
         db_path,
+        mailbox_url,
+        wallet_url,
     }
+}
+
+fn clone_keys(keys: &Keys) -> Keys {
+    serde_json::from_slice(
+        serde_json::to_vec(keys)
+            .expect("serialize keys")
+            .as_slice(),
+    )
+    .expect("deserialize keys")
 }
 
 fn remove_file_quiet(path: &PathBuf) {
@@ -915,6 +928,64 @@ async fn process_envelope_enqueues_pending_tx() {
 }
 
 #[tokio::test]
+async fn smoke_process_then_approve_roundtrip() {
+    let mut h = setup_harness("smoke_roundtrip").await;
+    let fixture = install_action_token_verifier(&mut h.agent, true, "smoke-roundtrip");
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&h.agent.db, escrow_id_hex).await;
+    let snapshot_hash = canonical_hash_hex(&snapshot).expect("snapshot hash");
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+    let env = build_tx_sign_req_envelope(
+        &h.local_keys,
+        &h.peer_keys,
+        escrow_id_hex,
+        &snapshot_hash,
+        1,
+    )
+    .await;
+
+    h.agent
+        .process_envelope(env)
+        .await
+        .expect("process envelope");
+    let pending = h.agent.db.list_pending().await.expect("list pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, "pending");
+
+    let token = build_sign_action_token(
+        &h.agent,
+        &fixture,
+        escrow_id_hex,
+        &pending[0].txset_hash_hex,
+        &snapshot_hash_for_token,
+        "jti-smoke-roundtrip",
+    );
+    h.agent
+        .approve_pending(pending[0].id, Some(&token))
+        .await
+        .expect("approve smoke path");
+
+    let row = get_pending(&h.agent, pending[0].id).await;
+    assert_eq!(row.status, "approved_sent");
+    let pushes = mailbox_pushes(&h.mailbox_state);
+    assert_eq!(pushes.len(), 1);
+    let body = decode_push_body(&pushes[0], &h.local_keys, &h.peer_keys);
+    let EscrowBody::TxSignResp(resp) = body else {
+        panic!("expected TxSignResp body");
+    };
+    assert!(resp.approved);
+    assert_eq!(resp.signed_tx_data_hex.as_deref(), Some("aa11"));
+
+    let audit = h.agent.db.list_audit_logs(200).await.expect("audit list");
+    assert!(audit.iter().any(|e| e.event_kind == "rx_validated"));
+    assert!(audit.iter().any(|e| e.event_kind == "pending_enqueued"));
+    assert!(audit.iter().any(|e| e.event_kind == "decision_approved"));
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&h.db_path);
+}
+
+#[tokio::test]
 async fn process_envelope_rejects_snapshot_mismatch_before_describe_transfer() {
     let h = setup_harness("enqueue_pending_snapshot_mismatch").await;
     let escrow_id_hex = "00112233445566778899aabbccddeeff";
@@ -944,6 +1015,51 @@ async fn process_envelope_rejects_snapshot_mismatch_before_describe_transfer() {
             .expect("list pending")
             .is_empty()
     );
+
+    remove_file_quiet(&h.db_path);
+}
+
+#[tokio::test]
+async fn process_envelope_rejects_out_of_order_seq_and_audits_replay() {
+    let h = setup_harness("out_of_order_seq").await;
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&h.agent.db, escrow_id_hex).await;
+    let snapshot_hash = canonical_hash_hex(&snapshot).expect("snapshot hash");
+    let env_seq_2 = build_tx_sign_req_envelope(
+        &h.local_keys,
+        &h.peer_keys,
+        escrow_id_hex,
+        &snapshot_hash,
+        2,
+    )
+    .await;
+    let env_seq_1 = build_tx_sign_req_envelope(
+        &h.local_keys,
+        &h.peer_keys,
+        escrow_id_hex,
+        &snapshot_hash,
+        1,
+    )
+    .await;
+
+    h.agent
+        .process_envelope(env_seq_2)
+        .await
+        .expect("first higher seq accepted");
+    let err = h
+        .agent
+        .process_envelope(env_seq_1)
+        .await
+        .expect_err("lower seq must be rejected");
+    let err_text = err.to_string().to_ascii_lowercase();
+    assert!(err_text.contains("out-of-order") || err_text.contains("replay"));
+
+    let pending = h.agent.db.list_pending().await.expect("list pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].seq, 2);
+
+    let audit = h.agent.db.list_audit_logs(200).await.expect("audit list");
+    assert!(audit.iter().any(|e| e.event_kind == "rx_rejected_replay"));
 
     remove_file_quiet(&h.db_path);
 }
@@ -1498,7 +1614,7 @@ async fn approve_pending_hash_mismatch_marks_error_and_never_signs() {
         .expect_err("hash mismatch must reject");
     assert!(err.to_string().contains("txset hash mismatch"));
     let row = get_pending(&h.agent, id).await;
-    assert_eq!(row.status, "error");
+    assert_eq!(row.status, "failed_dead_letter");
     assert!(wallet_calls(&h.wallet_state).is_empty());
     assert!(mailbox_pushes(&h.mailbox_state).is_empty());
 
@@ -1555,7 +1671,7 @@ async fn approve_pending_snapshot_mismatch_marks_error_without_sign_or_send() {
         .expect_err("snapshot mismatch must reject");
     assert!(err.to_string().contains("pending snapshot mismatch"));
     let row = get_pending(&h.agent, id).await;
-    assert_eq!(row.status, "error");
+    assert_eq!(row.status, "failed_dead_letter");
     assert!(wallet_calls(&h.wallet_state).is_empty());
     assert!(mailbox_pushes(&h.mailbox_state).is_empty());
 
@@ -1592,7 +1708,7 @@ async fn approve_pending_policy_mismatch_marks_error_before_sign() {
     assert!(calls.contains(&"describe_transfer".to_string()));
     assert!(!calls.contains(&"sign_multisig".to_string()));
     let row = get_pending(&h.agent, id).await;
-    assert_eq!(row.status, "error");
+    assert_eq!(row.status, "failed_dead_letter");
     assert!(mailbox_pushes(&h.mailbox_state).is_empty());
 
     remove_file_quiet(&h.db_path);
@@ -2083,6 +2199,63 @@ async fn approve_pending_consumes_jti_before_wallet_sign() {
 }
 
 #[tokio::test]
+async fn dead_letter_truth_uses_failed_dead_letter_status_and_decision_error_audit() {
+    let mut h = setup_harness("dead_letter_truth").await;
+    let fixture = install_action_token_verifier(&mut h.agent, true, "dead-letter-truth");
+
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&h.agent.db, escrow_id_hex).await;
+    let snapshot_hash = canonical_hash_hex(&snapshot).expect("snapshot hash");
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+    let txset_hash = txset_sha256_hex("aa11").expect("txset hash");
+    let id = enqueue_pending(
+        &h.agent,
+        escrow_id_hex,
+        1,
+        "pending",
+        &snapshot_hash,
+        txset_hash.clone(),
+    )
+    .await;
+
+    *h.wallet_state
+        .describe_address
+        .lock()
+        .expect("describe_address lock") = "unexpected_addr".to_string();
+
+    let token = build_sign_action_token(
+        &h.agent,
+        &fixture,
+        escrow_id_hex,
+        &txset_hash,
+        &snapshot_hash_for_token,
+        "jti-dead-letter-truth",
+    );
+    let err = h
+        .agent
+        .approve_pending(id, Some(&token))
+        .await
+        .expect_err("policy mismatch must fail");
+    assert!(err.to_string().contains("policy check failed"));
+
+    let row = get_pending(&h.agent, id).await;
+    assert_eq!(row.status, "failed_dead_letter");
+    assert!(
+        row.decision_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("policy check failed")
+    );
+    assert!(mailbox_pushes(&h.mailbox_state).is_empty());
+    let audit = h.agent.db.list_audit_logs(200).await.expect("audit list");
+    assert!(audit.iter().any(|e| e.event_kind == "decision_error"));
+    assert!(audit.iter().any(|e| e.decision.as_deref() == Some("dead_letter")));
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&h.db_path);
+}
+
+#[tokio::test]
 async fn approve_pending_start_sign_request_failure_stops_before_consume_and_sign() {
     let mut h = setup_harness("approve_start_req_fail").await;
     let fixture = install_action_token_verifier(&mut h.agent, true, "start-req-fail");
@@ -2385,6 +2558,87 @@ async fn approve_pending_retry_from_approved_sending_resends_without_resign() {
     };
     assert!(resp.approved);
     assert_eq!(resp.signed_tx_data_hex.as_deref(), Some("aa11"));
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&h.db_path);
+}
+
+#[tokio::test]
+async fn approve_pending_retry_from_approved_sending_recovers_after_restart() {
+    let mut h = setup_harness("approve_retry_restart").await;
+    let fixture = install_action_token_verifier(&mut h.agent, true, "retry-approved-restart");
+    *h.mailbox_state.fail_push.lock().expect("fail_push lock") = true;
+
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&h.agent.db, escrow_id_hex).await;
+    let snapshot_hash = canonical_hash_hex(&snapshot).expect("snapshot hash");
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+    let txset_hash = txset_sha256_hex("aa11").expect("txset hash");
+    let id = enqueue_pending(
+        &h.agent,
+        escrow_id_hex,
+        1,
+        "pending",
+        &snapshot_hash,
+        txset_hash.clone(),
+    )
+    .await;
+
+    let token = build_sign_action_token(
+        &h.agent,
+        &fixture,
+        escrow_id_hex,
+        &txset_hash,
+        &snapshot_hash_for_token,
+        "jti-retry-approved-restart",
+    );
+    let first_err = h
+        .agent
+        .approve_pending(id, Some(&token))
+        .await
+        .expect_err("first send should fail while mailbox push is forced down");
+    assert!(first_err.to_string().contains("mailbox http"));
+    let row_after_fail = get_pending(&h.agent, id).await;
+    assert_eq!(row_after_fail.status, "approved_sending");
+    let staged: Value = serde_json::from_str(
+        row_after_fail
+            .decision_reason
+            .as_deref()
+            .expect("approved_sending has staged json"),
+    )
+    .expect("approved staged json");
+    let staged_out_seq = staged
+        .get("out_seq")
+        .and_then(Value::as_u64)
+        .expect("approved staged out_seq");
+    assert_eq!(wallet_call_count(&h.wallet_state, "sign_multisig"), 1);
+
+    *h.mailbox_state.fail_push.lock().expect("fail_push lock") = false;
+    let restarted_agent = make_agent(
+        h.mailbox_url.clone(),
+        h.wallet_url.clone(),
+        h.db_path.clone(),
+        clone_keys(&h.local_keys),
+        clone_keys(&h.peer_keys),
+    )
+    .await;
+    clear_wallet_calls(&h.wallet_state);
+    restarted_agent
+        .approve_pending(id, None)
+        .await
+        .expect("retry after restart should resend and finalize");
+
+    let row_final = restarted_agent
+        .db
+        .get_pending(id)
+        .await
+        .expect("get pending")
+        .expect("pending exists");
+    assert_eq!(row_final.status, "approved_sent");
+    assert!(!wallet_calls(&h.wallet_state).contains(&"sign_multisig".to_string()));
+    let pushes = mailbox_pushes(&h.mailbox_state);
+    assert_eq!(pushes.len(), 1);
+    assert_eq!(push_envelope_seq(&pushes[0]), staged_out_seq);
 
     remove_file_quiet(&fixture.key_path);
     remove_file_quiet(&h.db_path);
