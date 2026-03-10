@@ -57,7 +57,7 @@ Każdy moduł, plik albo feature ma mieć jeden z tagów:
 - [ ] Przenieść `nxms-signer`.
 - [ ] Potwierdzić action token verification.
 - [ ] Potwierdzić sign i submit flow.
-- [ ] Wyłączyć shadow mode domyślnie.
+- [x] Wyłączyć shadow mode domyślnie.
 
 ## Etap 5 — migracja `nxms-escrow-orchestrator`
 - [ ] Przenieść orchestrator bez `http_flow.rs`.

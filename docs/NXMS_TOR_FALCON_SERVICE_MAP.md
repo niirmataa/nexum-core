@@ -91,7 +91,7 @@ Notes:
 - `nx-escrow-rs` logs still contain `tracing-subscriber` write errors (`No space left on device`) from earlier failures; investigate log target/rotation if evidence logging reliability matters.
 - Manual/local P0 runtime checks completed:
   - `nxms-mailbox serve` health OK on `127.0.0.1:4010`
-  - `nxms-signer serve` health OK on `127.0.0.1:28090` using temporary P0 config (shadow-mode runtime check only)
+  - `nxms-signer serve` health OK on `127.0.0.1:28090` using temporary P0 config with required action-token + service-auth runtime boundary
   - `nxms-signer run` + local `nxms-mailbox serve` concurrency check OK for 5s (both alive, no mailbox pull connection warnings)
   - `nxms-escrow-orchestrator init-db` + `run --once` OK on local test DB (`/tmp/nxms-p0/orchestrator/nxms_orchestrator.db`)
 - Orchestrator worker-route capability verified on local test DB (`worker-route set/show` for `seller` and `arbiter` roles).
@@ -112,7 +112,7 @@ Recorded local/manual commands (2026-02-22):
 - `[LOCAL/P0]` `./nexum_cli/nexum tor-check --base http://<escrow-onion> --socks5 socks5h://127.0.0.1:9050` (Tor path validation; also tested expected fail modes separately)
 - `[LOCAL/P0]` wallet-rpc capability checks (JSON-RPC on `127.0.0.1:38083` and `127.0.0.1:38084`): `open_wallet`, `refresh`, `is_multisig`, `get_balance`, `get_address`, `transfer` dry-run (`do_not_relay=true`)
 - `[LOCAL/P0]` `escrow/nxms-mailbox/target/release/nxms-mailbox serve --bind 127.0.0.1:4010` + local `/health` check (manual runtime availability)
-- `[LOCAL/P0]` `escrow/nxms-signer/target/release/nxms-signer serve` and `run` using temporary local config under `/tmp/nxms-p0/` (shadow-mode process/health/connectivity check only)
+- `[LOCAL/P0]` `escrow/nxms-signer/target/release/nxms-signer serve` and `run` using temporary local config under `/tmp/nxms-p0/` (fail-closed action-token runtime check)
 - `[LOCAL/P0]` `escrow/nxms-escrow-orchestrator/target/release/nxms-escrow-orchestrator init-db` and `run --once` on `/tmp/nxms-p0/orchestrator/nxms_orchestrator.db`
 - `[LOCAL/P0]` `./nexum_cli/nexum worker-route-set` / `worker-route-show` against local orchestrator test DB (`seller`, `arbiter`)
 - `[LOCAL/P1]` `./nexum_cli/nexum --help` (captured current command surface for matrix inventory; current binary prints help and exits with code `1`)
@@ -132,7 +132,7 @@ Recorded local/manual commands (2026-02-22):
   - Build discipline applied before runtime changes and again after parser fix/retest (`nexum_cli`, `monero-arbitra`, `nxms-mailbox`, `nxms-signer`, `nxms-escrow-orchestrator`)
   - Local runtime bring-up for preflight:
     - `nxms-mailbox serve --bind 127.0.0.1:4010 --db-path /tmp/nxms-p0/mailbox/nxms_mailbox.db`
-    - `NXMS_SIGNER_ALLOW_SHADOW_MODE=true NXMS_SIGNER_ORCH_BRIDGE_TOKEN=<32+ chars> nxms-signer serve --config /tmp/nxms-p0/signer/nxms-signer.toml --bind 127.0.0.1:28090`
+    - `NXMS_SIGNER_ORCH_BRIDGE_TOKEN=<32+ chars> nxms-signer serve --config /tmp/nxms-p0/signer/nxms-signer.toml --bind 127.0.0.1:28090`
     - `mailbox` + `signer` health confirmed on `127.0.0.1:4010/health` and `127.0.0.1:28090/healthz`
   - Deep probe context correction:
     - arbiter `open_wallet` enabled via env (`NXMS_PREFLIGHT_ARBITER_WALLET_NAME`, `XMR_ARBITER_WALLET_PASS`)

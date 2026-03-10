@@ -346,7 +346,7 @@ impl SignerAgent {
                 .await;
                 return Err(err);
             } else {
-                warn!("sign without action token (shadow mode)");
+                let err = anyhow!("action token required for sign in current signer configuration");
                 let detail = audit_security_detail(
                     "sign_multisig",
                     &role_for_audit,
@@ -356,21 +356,22 @@ impl SignerAgent {
                     &snapshot_hash_for_token,
                     None,
                     None,
-                    "shadow_allow",
-                    Some("action token missing; shadow mode allowed"),
+                    "reject",
+                    Some(&err.to_string()),
                 );
                 self.best_effort_audit(AuditLogInsert {
-                    event_kind: "sign_shadow_allow",
+                    event_kind: "sign_reject",
                     escrow_id_hex: &escrow_id_hex,
                     from_id: Some(&self.cfg.local_id),
                     to_id: None,
                     seq: None,
                     envelope_hash_hex: None,
                     payload_hash_hex: Some(&txset_hash_hex),
-                    decision: Some("shadow_allow"),
+                    decision: Some("rejected"),
                     detail: Some(&detail),
                 })
                 .await;
+                return Err(err);
             }
         }
 
@@ -1123,7 +1124,7 @@ impl SignerAgent {
                 .await;
                 return Err(err);
             } else {
-                warn!("submit without action token (shadow mode)");
+                let err = anyhow!("action token required for submit in current signer configuration");
                 let detail = audit_security_detail(
                     "submit_multisig",
                     &role_for_audit,
@@ -1133,21 +1134,22 @@ impl SignerAgent {
                     &snapshot_hash_for_token,
                     None,
                     None,
-                    "shadow_allow",
-                    Some("action token missing; shadow mode allowed"),
+                    "reject",
+                    Some(&err.to_string()),
                 );
                 self.best_effort_audit(AuditLogInsert {
-                    event_kind: "submit_shadow_allow",
+                    event_kind: "submit_reject",
                     escrow_id_hex: &escrow_id_hex,
                     from_id: Some(&self.cfg.local_id),
                     to_id: None,
                     seq: None,
                     envelope_hash_hex: None,
                     payload_hash_hex: Some(&txset_hash_hex),
-                    decision: Some("shadow_allow"),
+                    decision: Some("rejected"),
                     detail: Some(&detail),
                 })
                 .await;
+                return Err(err);
             }
         }
 

@@ -330,18 +330,13 @@ set allow_remote_wallet_rpc=true only for controlled break-glass scenarios",
                 action_token.verify_rate_limit_max_keys.clamp(64, 262_144);
         }
 
-        let shadow_mode_allowed = env_bool("NXMS_SIGNER_ALLOW_SHADOW_MODE");
-        if !shadow_mode_allowed {
-            let action_token = self.action_token.as_ref().ok_or_else(|| {
-                anyhow!(
-                    "NXMS Falcon multisig mode requires [action_token] section (set NXMS_SIGNER_ALLOW_SHADOW_MODE=true only for break-glass)"
-                )
-            })?;
-            if !action_token.required {
-                return Err(anyhow!(
-                    "NXMS Falcon multisig mode requires [action_token].required=true (set NXMS_SIGNER_ALLOW_SHADOW_MODE=true only for break-glass)"
-                ));
-            }
+        let action_token = self.action_token.as_ref().ok_or_else(|| {
+            anyhow!("NXMS Falcon multisig mode requires [action_token] section")
+        })?;
+        if !action_token.required {
+            return Err(anyhow!(
+                "NXMS Falcon multisig mode requires [action_token].required=true"
+            ));
         }
         if self.worker_service_token.is_none() {
             return Err(anyhow!(
@@ -751,11 +746,6 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 
-    fn clear_shadow_mode_env() {
-        // SAFETY: tests serialize environment mutation with env_lock().
-        unsafe { std::env::remove_var("NXMS_SIGNER_ALLOW_SHADOW_MODE") };
-    }
-
     fn base_cfg() -> SignerConfig {
         SignerConfig {
             local_id: "arbiter".to_string(),
@@ -1151,7 +1141,6 @@ mod tests {
     #[test]
     fn default_mode_requires_worker_service_token() {
         let _guard = env_lock().lock().expect("env lock");
-        clear_shadow_mode_env();
         let mut cfg = base_cfg();
         cfg.worker_service_token = None;
         let err = cfg
@@ -1179,7 +1168,6 @@ mod tests {
     #[test]
     fn default_mode_requires_action_token_section() {
         let _guard = env_lock().lock().expect("env lock");
-        clear_shadow_mode_env();
         let mut cfg = base_cfg();
         cfg.production_hardening = false;
         cfg.action_token = None;
@@ -1187,13 +1175,11 @@ mod tests {
             .normalize()
             .expect_err("default mode must reject missing action token section");
         assert!(err.to_string().contains("requires [action_token] section"));
-        clear_shadow_mode_env();
     }
 
     #[test]
     fn default_mode_requires_action_token_required_true() {
         let _guard = env_lock().lock().expect("env lock");
-        clear_shadow_mode_env();
         let mut cfg = base_cfg();
         cfg.production_hardening = false;
         cfg.action_token.as_mut().expect("action token").required = false;
@@ -1201,21 +1187,6 @@ mod tests {
             .normalize()
             .expect_err("default mode must reject action token required=false");
         assert!(err.to_string().contains("required=true"));
-        clear_shadow_mode_env();
-    }
-
-    #[test]
-    fn shadow_mode_break_glass_allows_missing_action_token_section() {
-        let _guard = env_lock().lock().expect("env lock");
-        clear_shadow_mode_env();
-        // SAFETY: tests serialize environment mutation with env_lock().
-        unsafe { std::env::set_var("NXMS_SIGNER_ALLOW_SHADOW_MODE", "true") };
-        let mut cfg = base_cfg();
-        cfg.production_hardening = false;
-        cfg.action_token = None;
-        cfg.normalize()
-            .expect("shadow break-glass should allow missing action token section");
-        clear_shadow_mode_env();
     }
 
     #[test]

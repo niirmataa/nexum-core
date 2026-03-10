@@ -287,9 +287,8 @@ impl SignerAgent {
                 .await;
                 return Err(err);
             } else {
-                warn!(
-                    "approve pending_id={} without action token (shadow mode)",
-                    pending.id
+                let err = anyhow!(
+                    "action token required for approve_pending in current signer configuration"
                 );
                 let detail = audit_security_detail(
                     "sign_multisig",
@@ -300,21 +299,22 @@ impl SignerAgent {
                     &snapshot_hash_for_token,
                     None,
                     None,
-                    "shadow_allow",
-                    Some("action token missing during approve_pending; shadow mode allowed"),
+                    "reject",
+                    Some(&err.to_string()),
                 );
                 self.best_effort_audit(AuditLogInsert {
-                    event_kind: "sign_shadow_allow",
+                    event_kind: "sign_reject",
                     escrow_id_hex: &pending.escrow_id_hex,
                     from_id: Some(&self.cfg.local_id),
                     to_id: Some(&pending.from_id),
                     seq: Some(pending.seq),
                     envelope_hash_hex: None,
                     payload_hash_hex: Some(&computed_txset_hash_hex),
-                    decision: Some("shadow_allow"),
+                    decision: Some("rejected"),
                     detail: Some(&detail),
                 })
                 .await;
+                return Err(err);
             }
         }
 
