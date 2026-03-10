@@ -1,0 +1,536 @@
+use std::path::Path;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result, anyhow};
+use axum::extract::State;
+use axum::response::IntoResponse;
+use axum::routing::post;
+use axum::{Json, Router};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use nxms_mailbox::{
+    AppState as MailboxAppState, api::ApiConfig as MailboxApiConfig, build_app as build_mailbox_app,
+    db::{MailboxLimits as MailboxDbLimits, SqliteMailboxDb as RealMailboxDb},
+};
+use nxms_mailbox_client::MailboxClient;
+use nxms_signer::{
+    SignerAgent,
+    action_token::ActionClaims,
+    config::{ActionTokenConfig, SignerConfig, SignerRole, WalletRpcConfig},
+    db::{SignerDb, SnapshotSigRow},
+    snapshot::{
+        AmountRule, Asset, ContractSnapshot, PayoutPolicy, RecipientRule, canonical_hash_hex,
+        canonical_policy_hash_sha256_hex,
+    },
+};
+use nxms_transport::crypto::{
+    Keys, SealedPacket, decrypt, encrypt, suite_kem_id, suite_sig_id,
+};
+use nxms_transport::peers::{Peer, PeerBook};
+use nxms_transport::wire::{
+    ESCROW_APP_PROTO_V1, EscrowAction, EscrowBody, MsgType, NxmsEnvelope, NxmsPayload,
+    TxSignReqBody, TxSignRespBody, msg_type_key,
+};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use tempfile::TempDir;
+
+const ED25519_PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJCBxRIEv7DU1o/rRG+beqeRLVa2kL9RAArTq6vRp7D0\n-----END PRIVATE KEY-----\n";
+const ED25519_PUBLIC_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAD7TxzeCSPJhJljqWs/fABRUaUBlTkJP8O1v31Z64F/I=\n-----END PUBLIC KEY-----\n";
+const BRIDGE_TOKEN_ENV: &str = "NXMS_SIGNER_ORCH_BRIDGE_TOKEN";
+const TEST_BRIDGE_TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+#[derive(Default)]
+struct WalletMockState;
+
+async fn wallet_rpc_handler(
+    State(_state): State<Arc<WalletMockState>>,
+    Json(req): Json<Value>,
+) -> impl IntoResponse {
+    let method = req
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let body = match method.as_str() {
+        "close_wallet" | "open_wallet" => json!({ "jsonrpc":"2.0", "id":"0", "result": {} }),
+        "is_multisig" => json!({
+            "jsonrpc":"2.0",
+            "id":"0",
+            "result": {
+                "multisig": true,
+                "ready": true,
+                "threshold": 2,
+                "total": 3
+            }
+        }),
+        "describe_transfer" => json!({
+            "jsonrpc":"2.0",
+            "id":"0",
+            "result": {
+                "desc": [{
+                    "recipients": [{"address": "release_addr", "amount": 100}],
+                    "fee": 10,
+                    "unlock_time": 0,
+                    "dummy_outputs": 0
+                }]
+            }
+        }),
+        "sign_multisig" => json!({
+            "jsonrpc":"2.0",
+            "id":"0",
+            "result": {
+                "tx_data_hex": "aa11",
+                "tx_hash_list": ["abcd"]
+            }
+        }),
+        other => json!({
+            "jsonrpc":"2.0",
+            "id":"0",
+            "error": {
+                "code": -1,
+                "message": format!("unsupported test method: {other}")
+            }
+        }),
+    };
+
+    Json(body)
+}
+
+async fn spawn_http_server(router: Router) -> Result<String> {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("bind test listener")?;
+    let addr = listener.local_addr().context("test listener addr")?;
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+    Ok(format!("http://{addr}"))
+}
+
+async fn spawn_real_mailbox_server(tempdir: &TempDir) -> Result<String> {
+    let db = RealMailboxDb::new(tempdir.path().join("mailbox.db"));
+    db.init()
+        .await
+        .map_err(|err| anyhow!("mailbox db init: {err}"))?;
+    let state = MailboxAppState::new(
+        db,
+        MailboxApiConfig {
+            push_token: Some("push-token-123456".to_string()),
+            pull_tokens: std::collections::HashMap::from([
+                ("local".to_string(), "pull-token-123456".to_string()),
+                ("peer1".to_string(), "peer1-pull-token-123456".to_string()),
+            ]),
+            ack_tokens: std::collections::HashMap::from([
+                ("local".to_string(), "ack-token-123456".to_string()),
+                ("peer1".to_string(), "peer1-ack-token-123456".to_string()),
+            ]),
+            admin_token: Some("admin-token-123456".to_string()),
+            max_body_bytes: 1024 * 1024,
+            default_ttl_secs: 60,
+            max_ttl_secs: 600,
+            lease_secs: 30,
+            max_wait_ms: 1000,
+            limits: MailboxDbLimits {
+                max_messages_per_inbox: 100,
+                max_bytes_per_inbox: 1024 * 1024,
+                max_rows_global: 1000,
+            },
+            rate_limit_ip_per_min: 1000,
+            rate_limit_to_per_min: 1000,
+        },
+    );
+    let app = build_mailbox_app(state, 1024 * 1024);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .context("bind mailbox listener")?;
+    let addr = listener.local_addr().context("mailbox listener addr")?;
+    tokio::spawn(async move {
+        let _ = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await;
+    });
+    Ok(format!("http://{addr}"))
+}
+
+fn clone_keys(keys: &Keys) -> Keys {
+    serde_json::from_slice(
+        serde_json::to_vec(keys)
+            .expect("serialize keys")
+            .as_slice(),
+    )
+    .expect("deserialize keys")
+}
+
+fn write_keys_json(path: &Path, keys: &Keys) -> Result<()> {
+    keys.write_json(&path.to_string_lossy())
+        .with_context(|| format!("write keys json {}", path.display()))
+}
+
+fn write_peers_json(path: &Path, peer_keys: &Keys) -> Result<()> {
+    let peerbook = PeerBook {
+        peers: vec![Peer {
+            id: "peer1".to_string(),
+            host: "peer1.onion".to_string(),
+            port: 80,
+            kem_pk_b64: peer_keys.kem_pk_b64.clone(),
+            sig_pk_b64: peer_keys.sig_pk_b64.clone(),
+        }],
+    };
+    std::fs::write(path, serde_json::to_vec_pretty(&peerbook)?)
+        .with_context(|| format!("write peers json {}", path.display()))
+}
+
+fn write_public_key_pem(path: &Path) -> Result<()> {
+    std::fs::write(path, ED25519_PUBLIC_PEM)
+        .with_context(|| format!("write public key {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("chmod 600 {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+async fn seed_active_snapshot(db: &SignerDb, escrow_id_hex: &str) -> Result<ContractSnapshot> {
+    let now = now_ms();
+    let snapshot = ContractSnapshot {
+        app_proto: ESCROW_APP_PROTO_V1.to_string(),
+        escrow_id_hex: escrow_id_hex.to_string(),
+        asset: Asset::Xmr,
+        buyer_id: "buyer".to_string(),
+        seller_id: "seller".to_string(),
+        arbiter_id: "local".to_string(),
+        release_policy: PayoutPolicy {
+            allowed_recipients: vec![RecipientRule {
+                address: "release_addr".to_string(),
+                amount: AmountRule::Exact { amount: 100 },
+                required: true,
+            }],
+            allow_split_tx: false,
+            allow_dummy_outputs: false,
+        },
+        refund_policy: PayoutPolicy {
+            allowed_recipients: vec![RecipientRule {
+                address: "refund_addr".to_string(),
+                amount: AmountRule::Exact { amount: 100 },
+                required: true,
+            }],
+            allow_split_tx: false,
+            allow_dummy_outputs: false,
+        },
+        fee_cap_atomic: 10,
+        require_unlock_time_zero: true,
+        created_at_unix_ms: now,
+        updated_at_unix_ms: now,
+    };
+    let hash = canonical_hash_hex(&snapshot)?;
+    db.put_snapshot_pending(
+        &snapshot.escrow_id_hex,
+        &hash,
+        &serde_json::to_string(&snapshot)?,
+    )
+    .await?;
+    db.put_snapshot_signature(&SnapshotSigRow {
+        signer_id: "sig1".to_string(),
+        sig_pk_b64: "x".to_string(),
+        sig_b64: "y".to_string(),
+        hash_hex: hash.clone(),
+        alg: "Falcon-1024-CT".to_string(),
+        created_at_unix_ms: now,
+    })
+    .await?;
+    db.activate_snapshot(&hash, 1).await?;
+    Ok(snapshot)
+}
+
+fn txset_sha256_hex(tx_data_hex: &str) -> Result<String> {
+    let tx_data = hex::decode(tx_data_hex).context("decode tx_data_hex")?;
+    Ok(hex::encode(Sha256::digest(tx_data)))
+}
+
+fn decode_escrow_id_hex(escrow_id_hex: &str) -> Result<[u8; 16]> {
+    let raw = hex::decode(escrow_id_hex).context("decode escrow id hex")?;
+    raw.try_into()
+        .map_err(|_| anyhow!("escrow id must decode to exactly 16 bytes"))
+}
+
+async fn build_tx_sign_req_envelope(
+    local_keys: &Keys,
+    peer_keys: &Keys,
+    escrow_id_hex: &str,
+    snapshot_hash_hex: &str,
+    seq: u64,
+) -> Result<NxmsEnvelope> {
+    let escrow_id_raw = decode_escrow_id_hex(escrow_id_hex)?;
+    let body = EscrowBody::TxSignReq(TxSignReqBody {
+        escrow_id_hex: escrow_id_hex.to_string(),
+        action: EscrowAction::Release,
+        multisig_txset_hex: "aa11".to_string(),
+        snapshot_hash_hex: snapshot_hash_hex.to_string(),
+        human_hint: Some("approve release".to_string()),
+    });
+    let payload = NxmsPayload {
+        app_proto: ESCROW_APP_PROTO_V1.to_string(),
+        msg_type: MsgType::TxSignReq,
+        escrow_id_hex: escrow_id_hex.to_string(),
+        from: "peer1".to_string(),
+        to: "local".to_string(),
+        seq,
+        data: serde_json::to_string(&body)?,
+    };
+    let plain = serde_json::to_vec(&payload)?;
+    let local_kem_pk = local_keys.kem_pk()?;
+    let peer_sig_sk = peer_keys.sig_sk_zeroizing()?;
+    let sealed = encrypt(
+        "peer1",
+        "local",
+        msg_type_key(&MsgType::TxSignReq),
+        &escrow_id_raw,
+        seq,
+        &local_kem_pk,
+        peer_sig_sk.as_slice(),
+        &plain,
+    )?;
+
+    Ok(NxmsEnvelope {
+        proto: "NXMS/1".to_string(),
+        kem_id: suite_kem_id().to_string(),
+        sig_id: suite_sig_id().to_string(),
+        msg_type: MsgType::TxSignReq,
+        escrow_id_hex: escrow_id_hex.to_string(),
+        from: "peer1".to_string(),
+        to: "local".to_string(),
+        seq,
+        kem_ct_b64: sealed.kem_ct_b64,
+        nonce_b64: sealed.nonce_b64,
+        ciphertext_b64: sealed.ciphertext_b64,
+        tag_b64: sealed.tag_b64,
+        sig_b64: sealed.sig_b64,
+    })
+}
+
+fn decode_envelope_body(env: &NxmsEnvelope, local_keys: &Keys, peer_keys: &Keys) -> Result<EscrowBody> {
+    let escrow_id_raw = decode_escrow_id_hex(&env.escrow_id_hex)?;
+    let sealed = SealedPacket {
+        kem_ct_b64: env.kem_ct_b64.clone(),
+        nonce_b64: env.nonce_b64.clone(),
+        ciphertext_b64: env.ciphertext_b64.clone(),
+        tag_b64: env.tag_b64.clone(),
+        sig_b64: env.sig_b64.clone(),
+    };
+    let peer_kem_sk = peer_keys.kem_sk_zeroizing()?;
+    let local_sig_pk = local_keys.sig_pk()?;
+    let plain = decrypt(
+        &env.from,
+        &env.to,
+        msg_type_key(&env.msg_type),
+        &escrow_id_raw,
+        env.seq,
+        &sealed,
+        peer_kem_sk.as_slice(),
+        &local_sig_pk,
+    )?;
+    let payload: NxmsPayload = serde_json::from_slice(&plain)?;
+    Ok(serde_json::from_str(&payload.data)?)
+}
+
+fn build_sign_action_token(
+    cfg: &SignerConfig,
+    snapshot_hash_hex: &str,
+    txset_hash_hex: &str,
+    jti: &str,
+) -> Result<String> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let claims = ActionClaims {
+        iss: "nxms-auth".to_string(),
+        aud: format!("sandbox:{}", cfg.sandbox_id),
+        sub: "arbiter_operator".to_string(),
+        scope: "sign_multisig".to_string(),
+        op: "sign_multisig".to_string(),
+        role: "arbiter".to_string(),
+        sign_round: "arbiter_first".to_string(),
+        escrow_id: "00112233445566778899aabbccddeeff".to_string(),
+        wallet_id: cfg.wallet_id.clone(),
+        sandbox_id: cfg.sandbox_id.clone(),
+        txset_hash: txset_hash_hex.to_string(),
+        snapshot_hash: snapshot_hash_hex.to_string(),
+        nettype: cfg.nettype.clone(),
+        iat: now,
+        nbf: now,
+        exp: now + 120,
+        jti: jti.to_string(),
+        proof_arbiter_jti: None,
+        proof_seller_jti: None,
+        proof_arbiter_req_id: None,
+        proof_seller_req_id: None,
+    };
+    let key = EncodingKey::from_ed_pem(ED25519_PRIVATE_PEM.as_bytes())?;
+    Ok(encode(&Header::new(Algorithm::EdDSA), &claims, &key)?)
+}
+
+async fn wait_for_pending(db: &SignerDb) -> Result<i64> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let pending = db.list_pending().await?;
+        if pending.len() == 1 {
+            return Ok(pending[0].id);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(anyhow!("timed out waiting for signer pending row"));
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn workspace_e2e_transport_mailbox_smoke_roundtrip() -> Result<()> {
+    std::env::set_var(BRIDGE_TOKEN_ENV, TEST_BRIDGE_TOKEN);
+
+    let tempdir = TempDir::new().context("tempdir")?;
+    let mailbox_url = spawn_real_mailbox_server(&tempdir).await?;
+    let wallet_url = spawn_http_server(
+        Router::new()
+            .route("/json_rpc", post(wallet_rpc_handler))
+            .with_state(Arc::new(WalletMockState)),
+    )
+    .await?;
+
+    let local_keys = Keys::generate().context("generate local keys")?;
+    let peer_keys = Keys::generate().context("generate peer keys")?;
+    let keys_path = tempdir.path().join("local_keys.json");
+    let peers_path = tempdir.path().join("peers.json");
+    let action_pub_key_path = tempdir.path().join("action_token_ed25519.pub.pem");
+    let db_path = tempdir.path().join("signer.db");
+    write_keys_json(&keys_path, &local_keys)?;
+    write_peers_json(&peers_path, &peer_keys)?;
+    write_public_key_pem(&action_pub_key_path)?;
+
+    let cfg = SignerConfig {
+        local_id: "local".to_string(),
+        signer_role: SignerRole::Arbiter,
+        sandbox_id: "sbx-local".to_string(),
+        wallet_id: "wallet-local".to_string(),
+        nettype: "stagenet".to_string(),
+        peers_path,
+        keys_path,
+        db_path: db_path.clone(),
+        mailbox_url: mailbox_url.clone(),
+        mailbox_push_token: Some("push-token-123456".to_string()),
+        mailbox_pull_token: Some("pull-token-123456".to_string()),
+        mailbox_ack_token: Some("ack-token-123456".to_string()),
+        mailbox_admin_token: None,
+        worker_service_token: Some("service-token-123456".to_string()),
+        tor_socks5h: None,
+        mailbox_retry_attempts: 3,
+        mailbox_retry_backoff_ms: 50,
+        allow_remote_wallet_rpc: false,
+        production_hardening: false,
+        wallet_rpc: WalletRpcConfig {
+            endpoint: wallet_url,
+            wallet_name: "wallet".to_string(),
+            wallet_password: "pass".to_string(),
+            username: "user".to_string(),
+            password: "pass".to_string(),
+        },
+        snapshot_quorum: 1,
+        pull_max: 10,
+        pull_wait_ms: 50,
+        poll_interval_ms: 25,
+        default_ttl_secs: 300,
+        max_txset_hex_len: 2048,
+        action_token: Some(ActionTokenConfig {
+            required: true,
+            issuer: "nxms-auth".to_string(),
+            audience: Some("sandbox:sbx-local".to_string()),
+            algorithm: "EDDSA".to_string(),
+            public_key_pem_path: action_pub_key_path,
+            clock_skew_secs: 5,
+            max_ttl_secs: 120,
+            verify_rate_limit_max_attempts: 8,
+            verify_rate_limit_window_secs: 60,
+            verify_rate_limit_max_keys: 4096,
+        }),
+        wallet_provision: None,
+    };
+
+    let agent = Arc::new(SignerAgent::from_config(cfg.clone()).await?);
+    let db = SignerDb::new(db_path.clone());
+    let snapshot = seed_active_snapshot(&db, "00112233445566778899aabbccddeeff").await?;
+    let snapshot_hash = canonical_hash_hex(&snapshot)?;
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot)?;
+
+    let run_agent = Arc::clone(&agent);
+    let agent_task = tokio::spawn(async move { run_agent.run().await });
+
+    let ingress_client = MailboxClient::builder(&mailbox_url)?
+        .push_token("push-token-123456")
+        .build()?;
+    let req_env = build_tx_sign_req_envelope(
+        &clone_keys(&local_keys),
+        &clone_keys(&peer_keys),
+        "00112233445566778899aabbccddeeff",
+        &snapshot_hash,
+        1,
+    )
+    .await?;
+    ingress_client.push(&req_env, Some(60)).await?;
+
+    let pending_id = wait_for_pending(&db).await?;
+    let sign_token = build_sign_action_token(
+        &cfg,
+        &snapshot_hash_for_token,
+        &txset_sha256_hex("aa11")?,
+        "jti-root-e2e-transport-mailbox",
+    )?;
+    agent
+        .approve_pending(pending_id, Some(&sign_token))
+        .await
+        .context("approve pending via signer")?;
+
+    let peer_client = MailboxClient::builder(&mailbox_url)?
+        .pull_token("peer1-pull-token-123456")
+        .ack_token("peer1-ack-token-123456")
+        .admin_token("admin-token-123456")
+        .build()?;
+    let pulled = peer_client.pull("peer1", Some(1), Some(1000)).await?;
+    assert_eq!(pulled.messages.len(), 1);
+
+    let body = decode_envelope_body(&pulled.messages[0].envelope, &local_keys, &peer_keys)?;
+    let EscrowBody::TxSignResp(TxSignRespBody {
+        approved,
+        signed_tx_data_hex,
+        ..
+    }) = body
+    else {
+        return Err(anyhow!("expected TxSignResp body"));
+    };
+    assert!(approved);
+    assert_eq!(signed_tx_data_hex.as_deref(), Some("aa11"));
+
+    peer_client.ack(&pulled.messages[0].receipt).await?;
+    let stats = peer_client.admin_stats().await?;
+    assert_eq!(stats.total_rows, 0);
+
+    let audit = db.list_audit_logs(200).await?;
+    assert!(audit.iter().any(|row| row.event_kind == "pending_enqueued"));
+    assert!(audit.iter().any(|row| row.event_kind == "decision_approved"));
+
+    agent_task.abort();
+    let _ = agent_task.await;
+    Ok(())
+}

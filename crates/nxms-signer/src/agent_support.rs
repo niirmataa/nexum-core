@@ -443,7 +443,7 @@ fn looks_like_jwt_token(token: &str) -> bool {
     })
 }
 
-pub(crate) fn normalize_hex_exact(value: &str, expected_len: usize, label: &str) -> Result<String> {
+pub fn normalize_hex_exact(value: &str, expected_len: usize, label: &str) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.len() != expected_len || !trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(anyhow!("{} must be {} hex chars", label, expected_len));
@@ -480,7 +480,7 @@ pub(crate) fn sha3_hex(input: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-pub(crate) fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     let dur = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock is before UNIX_EPOCH");

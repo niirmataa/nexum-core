@@ -1,22 +1,11 @@
-mod action_token;
-mod agent;
-mod agent_support;
-mod audit_event;
-mod config;
-mod db;
-mod orchestrator_bridge;
-mod snapshot;
-mod wallet_rpc;
-mod worker_http;
-
-use crate::agent::{AuthEventContext, SignerAgent, append_auth_event};
-use crate::agent_support::{normalize_hex_exact, now_ms};
-use crate::config::SignerConfig;
-use crate::db::{
-    AuditLogRow, PendingTxSign, SecurityAlertThresholds, SignEventAuditRow, SignerDb, SnapshotRow,
-    SnapshotSigRow,
+use nxms_signer::agent::{AuthEventContext, append_auth_event};
+use nxms_signer::snapshot::SnapshotSignature;
+use nxms_signer::worker_http;
+use nxms_signer::{
+    AuditLogRow, PendingTxSign, SecurityAlertThresholds, SignEventAuditRow, SignerAgent,
+    SignerConfig, SignerDb, SnapshotRow, SnapshotSigRow, normalize_hex_exact, now_ms,
 };
-use crate::snapshot::{
+use nxms_signer::snapshot::{
     AmountRule, Asset, ContractSnapshot, PayoutPolicy, RecipientRule, canonical_hash_hex,
     canonical_json_sha256_hex, sign_snapshot, verify_snapshot_signature,
 };
@@ -686,7 +675,7 @@ fn load_snapshot(path: &PathBuf) -> Result<ContractSnapshot> {
     Ok(serde_json::from_slice(&raw)?)
 }
 
-fn load_signature(path: &PathBuf) -> Result<crate::snapshot::SnapshotSignature> {
+fn load_signature(path: &PathBuf) -> Result<SnapshotSignature> {
     let raw = std::fs::read(path)?;
     Ok(serde_json::from_slice(&raw)?)
 }

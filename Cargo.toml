@@ -48,8 +48,17 @@ zeroize = "1"
 
 [dev-dependencies]
 anyhow.workspace = true
+axum = { version = "0.7", features = ["json"] }
+hex.workspace = true
+jsonwebtoken.workspace = true
+nxms-mailbox = { path = "crates/nxms-mailbox" }
+nxms-mailbox-client = { path = "crates/nxms-mailbox-client" }
+nxms-signer = { path = "crates/nxms-signer" }
+nxms-transport = { path = "crates/nxms-transport" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 
 [profile.dev]

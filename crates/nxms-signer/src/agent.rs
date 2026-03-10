@@ -468,7 +468,7 @@ fn merged_auth_event_detail(
     Ok(Some(merged))
 }
 
-pub(crate) async fn append_auth_event(
+pub async fn append_auth_event(
     cfg: &SignerConfig,
     db: &SignerDb,
     local_id: &str,

@@ -79,7 +79,7 @@ Każdy moduł, plik albo feature ma mieć jeden z tagów:
 
 ## Etap 9 — testy E2E
 - [ ] `tests/workspace_smoke.rs`
-- [ ] `tests/e2e_transport_mailbox.rs`
+- [x] `tests/e2e_transport_mailbox.rs`
 - [ ] `tests/e2e_sign_submit.rs`
 - [ ] `tests/e2e_orchestrated_flow.rs`
 - [x] Zdefiniować i utrzymywać P0 truth matrix dla `nxms-signer` w `docs/NXMS_SIGNER_P0_TEST_MATRIX.md`.
