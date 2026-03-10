@@ -64,6 +64,11 @@ Scope: `nxms-signer` truth-guarding tests for the canonical `nxms-transport -> n
   `tests/e2e_sign_submit.rs::workspace_e2e_sign_submit_roundtrip`
   This test extends the same workspace boundary to the real submit path.
   It is still a local boundary gate, not proof of cross-host Tor/onion deployment.
+- `workspace-level orchestrated control-plane gate`
+  `tests/e2e_orchestrated_flow.rs::workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane`
+  This test proves that a real orchestrator control-plane DB state can issue a real submit token
+  accepted by the signer runtime, without poisoning dead-letter truth during normal workflow progress.
+  It is still a local component/control-plane gate, not proof of cross-host Tor/onion deployment.
 
 ## Real Gate For This Stage
 Run at minimum:
@@ -80,6 +85,7 @@ cargo test -p nxms-signer transport_sign_submit_smoke_flow_uses_real_mailbox_app
 cargo test --test workspace_smoke -- --nocapture
 cargo test --test e2e_transport_mailbox -- --nocapture
 cargo test --test e2e_sign_submit -- --nocapture
+cargo test --test e2e_orchestrated_flow -- --nocapture
 ```
 
 Preferred full signer gate:

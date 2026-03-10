@@ -355,6 +355,18 @@ pub fn policy_hash_hex(snapshot: &ContractSnapshot) -> Result<String> {
     canonical_policy_hash_sha256_hex(snapshot)
 }
 
+pub fn write_action_token_private_key_pem(path: &Path) -> Result<()> {
+    std::fs::write(path, ED25519_PRIVATE_PEM)
+        .with_context(|| format!("write private key {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("chmod 600 {}", path.display()))?;
+    }
+    Ok(())
+}
+
 async fn wallet_rpc_handler(
     State(state): State<Arc<WalletMockState>>,
     Json(req): Json<Value>,

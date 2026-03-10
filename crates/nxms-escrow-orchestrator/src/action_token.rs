@@ -109,7 +109,7 @@ impl ActionTokenOp {
 }
 
 #[derive(Clone)]
-struct IssueActionTokenParams {
+pub struct IssueActionTokenParams {
     escrow_id_hex: String,
     txset_hash_hex: String,
     role: ActionTokenRole,
@@ -155,9 +155,9 @@ pub struct ActionTokenClaims {
 }
 
 #[derive(Clone, Debug, Serialize)]
-struct IssuedActionTokenOutput {
-    token: String,
-    claims: ActionTokenClaims,
+pub struct IssuedActionTokenOutput {
+    pub token: String,
+    pub claims: ActionTokenClaims,
 }
 
 pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
@@ -180,7 +180,7 @@ pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
             nettype,
         } => {
             crate::require_bridge_token(bridge_token.as_deref())?;
-            let params = build_issue_params(IssueActionTokenCliInput {
+            let params = build_issue_params(ActionTokenCliInput {
                 escrow_id_hex,
                 txset_hash_hex,
                 role,
@@ -205,23 +205,23 @@ pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
 }
 
 #[derive(Clone, Debug)]
-struct IssueActionTokenCliInput {
-    escrow_id_hex: String,
-    txset_hash_hex: String,
-    role: ActionTokenRole,
-    op: ActionTokenOp,
-    issuer: Option<String>,
-    algorithm: String,
-    private_key_pem_path: Option<PathBuf>,
-    ttl_secs: u64,
-    subject: Option<String>,
-    wallet_id: Option<String>,
-    sandbox_id: Option<String>,
-    audience: Option<String>,
-    nettype: Option<String>,
+pub struct ActionTokenCliInput {
+    pub escrow_id_hex: String,
+    pub txset_hash_hex: String,
+    pub role: ActionTokenRole,
+    pub op: ActionTokenOp,
+    pub issuer: Option<String>,
+    pub algorithm: String,
+    pub private_key_pem_path: Option<PathBuf>,
+    pub ttl_secs: u64,
+    pub subject: Option<String>,
+    pub wallet_id: Option<String>,
+    pub sandbox_id: Option<String>,
+    pub audience: Option<String>,
+    pub nettype: Option<String>,
 }
 
-fn build_issue_params(input: IssueActionTokenCliInput) -> Result<IssueActionTokenParams> {
+pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionTokenParams> {
     let escrow_id_hex = normalize_hex_exact(&input.escrow_id_hex, 32, "escrow_id_hex")?;
     let txset_hash_hex = normalize_hex_exact(&input.txset_hash_hex, 64, "txset_hash_hex")?;
     let issuer = normalize_non_empty(
@@ -298,7 +298,7 @@ fn build_issue_params(input: IssueActionTokenCliInput) -> Result<IssueActionToke
     })
 }
 
-async fn issue_action_token(
+pub async fn issue_action_token(
     db: &OrchestratorDb,
     params: &IssueActionTokenParams,
 ) -> Result<IssuedActionTokenOutput> {
@@ -819,7 +819,7 @@ mod tests {
             perms.set_mode(0o600);
             std::fs::set_permissions(&key_path, perms).expect("chmod 600");
         }
-        let err = match build_issue_params(IssueActionTokenCliInput {
+        let err = match build_issue_params(ActionTokenCliInput {
             escrow_id_hex: "00112233445566778899aabbccddeeff".to_string(),
             txset_hash_hex: "aa".repeat(32),
             role: ActionTokenRole::Seller,

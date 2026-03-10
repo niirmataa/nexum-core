@@ -691,18 +691,7 @@ fn transition_workflow_sync(
         "UPDATE workflow_instances SET state=?1, updated_at_ms=?2 WHERE escrow_id_hex=?3",
         params![to_state.as_str(), now, &escrow_id_hex],
     )?;
-
-    if let Some(reason) = reason {
-        add_dead_letter_tx(
-            &tx,
-            &escrow_id_hex,
-            "transition",
-            "transition_note",
-            reason,
-            0,
-            None,
-        )?;
-    }
+    let _ = reason;
     tx.commit()?;
     Ok(())
 }
@@ -2282,6 +2271,42 @@ mod tests {
             .expect("get")
             .expect("exists");
         assert_eq!(wf.state, WorkflowState::PrepareCollected);
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn transition_reason_is_not_recorded_as_dead_letter() {
+        let db_path = unique_db_path("workflow_transition_reason");
+        let db = OrchestratorDb::new(db_path.clone());
+        db.init().await.expect("init");
+        let escrow_id_hex = "00112233445566778899aabbccddeeff";
+        db.create_workflow(
+            escrow_id_hex,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            &[
+                "alice".to_string(),
+                "bob".to_string(),
+                "arbiter".to_string(),
+            ],
+        )
+        .await
+        .expect("create");
+        db.transition_workflow(
+            escrow_id_hex,
+            WorkflowState::PrepareCollected,
+            Some("expected progress note"),
+        )
+        .await
+        .expect("transition");
+
+        let dead_letters = db.list_dead_letters(50).await.expect("dead letters");
+        assert!(
+            dead_letters.is_empty(),
+            "workflow transition notes must not poison dead-letter metrics"
+        );
+
+        let metrics = db.slo_metrics(60_000, 60_000).await.expect("slo metrics");
+        assert_eq!(metrics.dead_letter_window, 0);
         let _ = std::fs::remove_file(db_path);
     }
 

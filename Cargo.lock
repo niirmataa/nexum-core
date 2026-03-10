@@ -964,6 +964,7 @@ dependencies = [
  "axum",
  "hex",
  "jsonwebtoken",
+ "nxms-escrow-orchestrator",
  "nxms-mailbox",
  "nxms-mailbox-client",
  "nxms-signer",

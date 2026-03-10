@@ -1,19 +1,10 @@
-#![forbid(unsafe_code)]
-
-mod action_token;
-mod db;
-mod flow;
-mod tx_profile;
-
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use serde_json::to_string_pretty;
 use std::path::PathBuf;
 
-use crate::action_token::{ActionTokenCommand, handle_action_token};
-use crate::db::{OrchestratorDb, SloAlertThresholds};
-
-const ENV_BRIDGE_TOKEN_INPUT: &str = "NXMS_ORCH_BRIDGE_TOKEN_INPUT";
+use nxms_escrow_orchestrator::action_token::{ActionTokenCommand, handle_action_token};
+use nxms_escrow_orchestrator::db::{OrchestratorDb, SloAlertThresholds};
 
 #[derive(Debug, Parser)]
 #[command(name = "nxms-escrow-orchestrator")]
@@ -132,31 +123,6 @@ async fn main() -> Result<()> {
         Command::IntegrityCheck(args) => run_integrity_check(args).await,
         Command::SloReport(args) => run_slo_report(args).await,
     }
-}
-
-pub(crate) fn require_bridge_token(bridge_token: Option<&str>) -> Result<()> {
-    let cli_token_ok = bridge_token
-        .map(str::trim)
-        .map(|v| !v.is_empty())
-        .unwrap_or(false);
-
-    if cli_token_ok {
-        return Ok(());
-    }
-
-    let env_token_ok = std::env::var(ENV_BRIDGE_TOKEN_INPUT)
-        .ok()
-        .map(|v| !v.trim().is_empty())
-        .unwrap_or(false);
-
-    if env_token_ok {
-        return Ok(());
-    }
-
-    Err(anyhow!(
-        "missing bridge token: pass --bridge-token or set {}",
-        ENV_BRIDGE_TOKEN_INPUT
-    ))
 }
 
 async fn run_quorum_proof(command: QuorumProofCommand) -> Result<()> {

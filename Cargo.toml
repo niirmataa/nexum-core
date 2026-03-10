@@ -53,6 +53,7 @@ hex.workspace = true
 jsonwebtoken.workspace = true
 nxms-mailbox = { path = "crates/nxms-mailbox" }
 nxms-mailbox-client = { path = "crates/nxms-mailbox-client" }
+nxms-escrow-orchestrator = { path = "crates/nxms-escrow-orchestrator" }
 nxms-signer = { path = "crates/nxms-signer" }
 nxms-transport = { path = "crates/nxms-transport" }
 serde.workspace = true
