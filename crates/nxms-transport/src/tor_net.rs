@@ -18,7 +18,12 @@ pub async fn read_frame(stream: &mut TcpStream, max_len: usize) -> Result<Vec<u8
     let mut len_buf = [0u8; 4];
     tokio::time::timeout(read_timeout, stream.read_exact(&mut len_buf))
         .await
-        .map_err(|_| anyhow!("read frame header timeout after {}s", read_timeout.as_secs()))??;
+        .map_err(|_| {
+            anyhow!(
+                "read frame header timeout after {}s",
+                read_timeout.as_secs()
+            )
+        })??;
     let len = u32::from_be_bytes(len_buf) as usize;
     if len == 0 || len > max_len {
         return Err(anyhow!("invalid frame length {}", len));

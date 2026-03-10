@@ -737,7 +737,10 @@ mod tests {
 
         let reopened = SqliteMailboxDb::new(db_path.clone());
         reopened.init().await.expect("reopen init");
-        let redelivered = reopened.pull("bob", 10, 1).await.expect("pull after restart");
+        let redelivered = reopened
+            .pull("bob", 10, 1)
+            .await
+            .expect("pull after restart");
         assert_eq!(redelivered.len(), 1);
         assert_eq!(redelivered[0].envelope.seq, 1);
         assert_ne!(redelivered[0].receipt, first_receipt);

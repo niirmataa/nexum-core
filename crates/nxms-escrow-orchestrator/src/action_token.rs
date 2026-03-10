@@ -22,7 +22,11 @@ const ENV_ACTION_TOKEN_TTL_SECS: &str = "NXMS_ORCH_ACTION_TOKEN_TTL_SECS";
 #[derive(Subcommand, Debug)]
 pub enum ActionTokenCommand {
     Issue {
-        #[arg(long, env = "NXMS_ORCH_DB_PATH", default_value = "nxms_orchestrator.db")]
+        #[arg(
+            long,
+            env = "NXMS_ORCH_DB_PATH",
+            default_value = "nxms_orchestrator.db"
+        )]
         db_path: PathBuf,
         #[arg(long)]
         escrow_id_hex: String,
@@ -237,8 +241,12 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
     });
-    let private_key_pem_path =
-        private_key_pem_path.ok_or_else(|| anyhow!("missing private_key_pem_path (or {})", ENV_ACTION_TOKEN_PRIVATE_KEY_PEM_PATH))?;
+    let private_key_pem_path = private_key_pem_path.ok_or_else(|| {
+        anyhow!(
+            "missing private_key_pem_path (or {})",
+            ENV_ACTION_TOKEN_PRIVATE_KEY_PEM_PATH
+        )
+    })?;
     let pem = read_private_key_pem_checked(&private_key_pem_path)?;
     let encoding_key = match algorithm {
         Algorithm::EdDSA => EncodingKey::from_ed_pem(&pem)?,
@@ -305,7 +313,12 @@ pub async fn issue_action_token(
     let workflow = db
         .get_workflow(&params.escrow_id_hex)
         .await?
-        .ok_or_else(|| anyhow!("workflow not found for escrow_id_hex={}", params.escrow_id_hex))?;
+        .ok_or_else(|| {
+            anyhow!(
+                "workflow not found for escrow_id_hex={}",
+                params.escrow_id_hex
+            )
+        })?;
     if !workflow_state_allows_action_token(workflow.state) {
         bail!(
             "workflow state {:?} does not allow action token issuance",
@@ -430,7 +443,11 @@ fn parse_algorithm(raw: &str) -> Result<Algorithm> {
     }
 }
 
-fn resolve_required_with_env(cli_value: Option<String>, env_name: &str, label: &str) -> Result<String> {
+fn resolve_required_with_env(
+    cli_value: Option<String>,
+    env_name: &str,
+    label: &str,
+) -> Result<String> {
     if let Some(v) = cli_value {
         return Ok(v);
     }
@@ -455,10 +472,21 @@ fn resolve_role_required(
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .ok_or_else(|| anyhow!("missing {} for role {} (or {})", label, role.claim_value(), env_name))
+        .ok_or_else(|| {
+            anyhow!(
+                "missing {} for role {} (or {})",
+                label,
+                role.claim_value(),
+                env_name
+            )
+        })
 }
 
-fn resolve_role_optional(cli_value: Option<String>, role: ActionTokenRole, suffix: &str) -> Option<String> {
+fn resolve_role_optional(
+    cli_value: Option<String>,
+    role: ActionTokenRole,
+    suffix: &str,
+) -> Option<String> {
     cli_value.or_else(|| {
         let env_name = format!("NXMS_ORCH_ACTION_TOKEN_{}_{}", role.env_prefix(), suffix);
         std::env::var(env_name)
@@ -536,7 +564,13 @@ fn read_private_key_pem_checked(path: &Path) -> Result<Vec<u8>> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-        .map_err(|e| anyhow!("failed to open action token private key {}: {}", path.display(), e))?;
+        .map_err(|e| {
+            anyhow!(
+                "failed to open action token private key {}: {}",
+                path.display(),
+                e
+            )
+        })?;
     let metadata = file.metadata().map_err(|e| {
         anyhow!(
             "failed to stat opened action token private key {}: {}",
@@ -558,10 +592,13 @@ fn read_private_key_pem_checked(path: &Path) -> Result<Vec<u8>> {
 
 #[cfg(not(unix))]
 fn read_private_key_pem_checked(path: &Path) -> Result<Vec<u8>> {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .open(path)
-        .map_err(|e| anyhow!("failed to open action token private key {}: {}", path.display(), e))?;
+    let mut file = OpenOptions::new().read(true).open(path).map_err(|e| {
+        anyhow!(
+            "failed to open action token private key {}: {}",
+            path.display(),
+            e
+        )
+    })?;
     let metadata = file.metadata().map_err(|e| {
         anyhow!(
             "failed to stat opened action token private key {}: {}",
@@ -648,7 +685,11 @@ mod tests {
         db.create_workflow(
             escrow_id_hex,
             &"11".repeat(32),
-            &["buyer".to_string(), "seller".to_string(), "arbiter".to_string()],
+            &[
+                "buyer".to_string(),
+                "seller".to_string(),
+                "arbiter".to_string(),
+            ],
         )
         .await
         .expect("create workflow");
@@ -687,7 +728,8 @@ mod tests {
     async fn issue_sign_multisig_token_from_db_state() {
         let escrow_id_hex = "00112233445566778899aabbccddeeff";
         let txset_hash_hex = &"aa".repeat(32);
-        let (db, db_path) = setup_db_with_workflow_and_proposal(escrow_id_hex, txset_hash_hex).await;
+        let (db, db_path) =
+            setup_db_with_workflow_and_proposal(escrow_id_hex, txset_hash_hex).await;
 
         let key_path = unique_path("issuer", "pem");
         std::fs::write(&key_path, ED25519_PRIVATE_PEM).expect("write private key");
@@ -728,7 +770,8 @@ mod tests {
     async fn issue_submit_multisig_token_includes_quorum_proofs() {
         let escrow_id_hex = "00112233445566778899aabbccddeeff";
         let txset_hash_hex = &"bb".repeat(32);
-        let (db, db_path) = setup_db_with_workflow_and_proposal(escrow_id_hex, txset_hash_hex).await;
+        let (db, db_path) =
+            setup_db_with_workflow_and_proposal(escrow_id_hex, txset_hash_hex).await;
 
         db.upsert_quorum_sign_proof(
             escrow_id_hex,

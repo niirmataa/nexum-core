@@ -111,7 +111,10 @@ fn evict_oldest_entry(entries: &mut HashMap<String, VerifyRateEntry>) {
     }
 }
 
-fn validate_public_key_pem_metadata(path: &std::path::Path, metadata: &std::fs::Metadata) -> Result<()> {
+fn validate_public_key_pem_metadata(
+    path: &std::path::Path,
+    metadata: &std::fs::Metadata,
+) -> Result<()> {
     if !metadata.is_file() {
         return Err(anyhow!(
             "action token public key path is not a regular file: {}",
@@ -137,7 +140,13 @@ fn read_public_key_pem_checked(path: &std::path::Path) -> Result<Vec<u8>> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-        .map_err(|e| anyhow!("failed to open action token public key {}: {}", path.display(), e))?;
+        .map_err(|e| {
+            anyhow!(
+                "failed to open action token public key {}: {}",
+                path.display(),
+                e
+            )
+        })?;
     let metadata = file.metadata().map_err(|e| {
         anyhow!(
             "failed to stat opened action token public key {}: {}",
@@ -159,8 +168,13 @@ fn read_public_key_pem_checked(path: &std::path::Path) -> Result<Vec<u8>> {
 
 #[cfg(not(unix))]
 fn read_public_key_pem_checked(path: &std::path::Path) -> Result<Vec<u8>> {
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| anyhow!("failed to open action token public key {}: {}", path.display(), e))?;
+    let mut file = std::fs::File::open(path).map_err(|e| {
+        anyhow!(
+            "failed to open action token public key {}: {}",
+            path.display(),
+            e
+        )
+    })?;
     let metadata = file.metadata().map_err(|e| {
         anyhow!(
             "failed to stat opened action token public key {}: {}",

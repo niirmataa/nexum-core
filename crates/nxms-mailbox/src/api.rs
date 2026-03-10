@@ -1058,13 +1058,9 @@ mod tests {
             axum::http::header::AUTHORIZATION,
             HeaderValue::from_static("Bearer ack-token-bob"),
         );
-        let response = ack(
-            State(state),
-            correct_headers,
-            Json(AckRequest { receipt }),
-        )
-        .await
-        .expect("correct inbox ack token");
+        let response = ack(State(state), correct_headers, Json(AckRequest { receipt }))
+            .await
+            .expect("correct inbox ack token");
         assert!(response.0.ok);
         let _ = std::fs::remove_file(db_path);
     }

@@ -1,17 +1,17 @@
 mod support;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use nxms_escrow_orchestrator::{
-    ActionTokenCliInput, ActionTokenOp, ActionTokenRole, OrchestratorDb, build_issue_params,
-    flow::WorkflowState, issue_action_token,
+    build_issue_params, flow::WorkflowState, issue_action_token, ActionTokenCliInput,
+    ActionTokenOp, ActionTokenRole, OrchestratorDb,
 };
 use nxms_signer::action_token::sign_req_id;
 use nxms_transport::wire::{EscrowAction, EscrowBody, TxSignRespBody};
 use tempfile::TempDir;
 
 use support::{
-    WorkspaceSignerHarness, policy_hash_hex, stop_agent_task, txset_sha256_hex,
-    write_action_token_private_key_pem,
+    policy_hash_hex, stop_agent_task, txset_sha256_hex, write_action_token_private_key_pem,
+    WorkspaceSignerHarness,
 };
 
 async fn transition_workflow_to_funded(db: &OrchestratorDb, escrow_id_hex: &str) -> Result<()> {
@@ -41,7 +41,9 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
 
     let orchestrator_tempdir = TempDir::new()?;
     let orchestrator_db_path = orchestrator_tempdir.path().join("orchestrator.db");
-    let orchestrator_key_path = orchestrator_tempdir.path().join("orch_action_token_ed25519.pem");
+    let orchestrator_key_path = orchestrator_tempdir
+        .path()
+        .join("orch_action_token_ed25519.pem");
     write_action_token_private_key_pem(&orchestrator_key_path)?;
 
     let orchestrator_db = OrchestratorDb::new(orchestrator_db_path.clone());
@@ -93,14 +95,29 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
         return Err(anyhow!("expected TxSignResp body"));
     };
     assert!(approved);
-    let signed_tx_data_hex = signed_tx_data_hex.ok_or_else(|| anyhow!("missing signed_tx_data_hex"))?;
+    let signed_tx_data_hex =
+        signed_tx_data_hex.ok_or_else(|| anyhow!("missing signed_tx_data_hex"))?;
     peer_client.ack(&pulled.messages[0].receipt).await?;
 
-    let arbiter_req_id = sign_req_id(escrow_id_hex, "sign_multisig", "arbiter_first", &txset_hash_hex);
+    let arbiter_req_id = sign_req_id(
+        escrow_id_hex,
+        "sign_multisig",
+        "arbiter_first",
+        &txset_hash_hex,
+    );
     let seller_jti = "seller-proof-jti-root-e2e-orchestrated";
-    let seller_req_id = sign_req_id(escrow_id_hex, "sign_multisig", "seller_second", &txset_hash_hex);
+    let seller_req_id = sign_req_id(
+        escrow_id_hex,
+        "sign_multisig",
+        "seller_second",
+        &txset_hash_hex,
+    );
     orchestrator_db
-        .transition_workflow(escrow_id_hex, WorkflowState::TxSignPending, Some("sign request delivered"))
+        .transition_workflow(
+            escrow_id_hex,
+            WorkflowState::TxSignPending,
+            Some("sign request delivered"),
+        )
         .await?;
     orchestrator_db
         .upsert_quorum_sign_proof(
@@ -171,7 +188,11 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
     assert_eq!(submitted, vec!["submithash".to_string()]);
 
     orchestrator_db
-        .transition_workflow(escrow_id_hex, WorkflowState::Submitted, Some("submit success"))
+        .transition_workflow(
+            escrow_id_hex,
+            WorkflowState::Submitted,
+            Some("submit success"),
+        )
         .await?;
     let workflow = orchestrator_db
         .get_workflow(escrow_id_hex)
@@ -187,14 +208,22 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
         "control-plane progress notes must not surface as dead letters"
     );
 
-    let slo = orchestrator_db.slo_alert_report(60_000, 60_000, Default::default()).await?;
-    assert!(slo.ok, "unexpected slo report: {}", serde_json::to_string_pretty(&slo)?);
+    let slo = orchestrator_db
+        .slo_alert_report(60_000, 60_000, Default::default())
+        .await?;
+    assert!(
+        slo.ok,
+        "unexpected slo report: {}",
+        serde_json::to_string_pretty(&slo)?
+    );
     assert_eq!(slo.metrics.workflows_total, 1);
     assert_eq!(slo.metrics.outbox_pending, 0);
     assert_eq!(slo.metrics.dead_letter_window, 0);
 
     let signer_audit = harness.db.list_audit_logs(200).await?;
-    assert!(signer_audit.iter().any(|row| row.event_kind == "submit_success"));
+    assert!(signer_audit
+        .iter()
+        .any(|row| row.event_kind == "submit_success"));
 
     stop_agent_task(agent_task).await;
     Ok(())

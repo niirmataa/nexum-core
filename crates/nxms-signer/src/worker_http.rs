@@ -134,9 +134,13 @@ pub async fn serve(agent: SignerAgent, bind: &str) -> Result<()> {
 }
 
 fn bind_is_loopback(bind: &str) -> Result<bool> {
-    let addr: SocketAddr = bind
-        .parse()
-        .map_err(|e| anyhow!("worker bind '{}' must be explicit socket address host:port: {}", bind, e))?;
+    let addr: SocketAddr = bind.parse().map_err(|e| {
+        anyhow!(
+            "worker bind '{}' must be explicit socket address host:port: {}",
+            bind,
+            e
+        )
+    })?;
     Ok(match addr.ip() {
         IpAddr::V4(v4) => v4.is_loopback(),
         IpAddr::V6(v6) => v6.is_loopback(),

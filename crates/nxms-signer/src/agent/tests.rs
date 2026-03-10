@@ -13,7 +13,8 @@ use axum::routing::post;
 use axum::{Json, Router};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use nxms_mailbox::{
-    AppState as MailboxAppState, api::ApiConfig as MailboxApiConfig,
+    AppState as MailboxAppState,
+    api::ApiConfig as MailboxApiConfig,
     build_app as build_mailbox_app,
     db::{MailboxLimits as MailboxDbLimits, SqliteMailboxDb as RealMailboxDb},
 };
@@ -421,11 +422,7 @@ async fn make_agent(
                 .clone()
                 .expect("pull token configured"),
         )
-        .ack_token(
-            cfg.mailbox_ack_token
-                .clone()
-                .expect("ack token configured"),
-        )
+        .ack_token(cfg.mailbox_ack_token.clone().expect("ack token configured"))
         .build()
         .expect("mailbox client");
     let wallet = WalletRpcClient::new(
@@ -586,12 +583,8 @@ async fn setup_harness(label: &str) -> TestHarness {
 }
 
 fn clone_keys(keys: &Keys) -> Keys {
-    serde_json::from_slice(
-        serde_json::to_vec(keys)
-            .expect("serialize keys")
-            .as_slice(),
-    )
-    .expect("deserialize keys")
+    serde_json::from_slice(serde_json::to_vec(keys).expect("serialize keys").as_slice())
+        .expect("deserialize keys")
 }
 
 fn remove_file_quiet(path: &PathBuf) {
@@ -2315,7 +2308,11 @@ async fn dead_letter_truth_uses_failed_dead_letter_status_and_decision_error_aud
     assert!(mailbox_pushes(&h.mailbox_state).is_empty());
     let audit = h.agent.db.list_audit_logs(200).await.expect("audit list");
     assert!(audit.iter().any(|e| e.event_kind == "decision_error"));
-    assert!(audit.iter().any(|e| e.decision.as_deref() == Some("dead_letter")));
+    assert!(
+        audit
+            .iter()
+            .any(|e| e.decision.as_deref() == Some("dead_letter"))
+    );
 
     remove_file_quiet(&fixture.key_path);
     remove_file_quiet(&h.db_path);
@@ -2617,7 +2614,11 @@ async fn signer_delivers_approved_response_to_real_mailbox_app() {
         .await
         .expect("pull real mailbox response");
     assert_eq!(pulled.messages.len(), 1);
-    let body = decode_push_body(&serde_json::json!({"envelope": pulled.messages[0].envelope}), &local_keys, &peer_keys);
+    let body = decode_push_body(
+        &serde_json::json!({"envelope": pulled.messages[0].envelope}),
+        &local_keys,
+        &peer_keys,
+    );
     let EscrowBody::TxSignResp(resp) = body else {
         panic!("expected TxSignResp body");
     };
@@ -2670,14 +2671,8 @@ async fn transport_mailbox_signer_smoke_flow_uses_real_mailbox_app() {
         .push_token("push-token-123456")
         .build()
         .expect("ingress client");
-    let req_env = build_tx_sign_req_envelope(
-        &local_keys,
-        &peer_keys,
-        escrow_id_hex,
-        &snapshot_hash,
-        1,
-    )
-    .await;
+    let req_env =
+        build_tx_sign_req_envelope(&local_keys, &peer_keys, escrow_id_hex, &snapshot_hash, 1).await;
     ingress_client
         .push(&req_env, Some(60))
         .await
@@ -2782,14 +2777,8 @@ async fn transport_sign_submit_smoke_flow_uses_real_mailbox_app() {
         .push_token("push-token-123456")
         .build()
         .expect("ingress client");
-    let req_env = build_tx_sign_req_envelope(
-        &local_keys,
-        &peer_keys,
-        escrow_id_hex,
-        &snapshot_hash,
-        1,
-    )
-    .await;
+    let req_env =
+        build_tx_sign_req_envelope(&local_keys, &peer_keys, escrow_id_hex, &snapshot_hash, 1).await;
     ingress_client
         .push(&req_env, Some(60))
         .await
@@ -2845,10 +2834,7 @@ async fn transport_sign_submit_smoke_flow_uses_real_mailbox_app() {
         panic!("expected TxSignResp body");
     };
     assert!(resp.approved);
-    let signed_tx_data_hex = resp
-        .signed_tx_data_hex
-        .clone()
-        .expect("signed tx data");
+    let signed_tx_data_hex = resp.signed_tx_data_hex.clone().expect("signed tx data");
     peer_client
         .ack(&peer_pulled.messages[0].receipt)
         .await

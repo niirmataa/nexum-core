@@ -4,36 +4,36 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{anyhow, Context, Result};
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
-use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use nxms_mailbox::{
-    AppState as MailboxAppState, api::ApiConfig as MailboxApiConfig, build_app as build_mailbox_app,
+    api::ApiConfig as MailboxApiConfig,
+    build_app as build_mailbox_app,
     db::{MailboxLimits as MailboxDbLimits, SqliteMailboxDb as RealMailboxDb},
+    AppState as MailboxAppState,
 };
 use nxms_mailbox_client::MailboxClient;
 use nxms_signer::{
-    SignerAgent,
-    action_token::{ActionClaims, sign_req_id},
+    action_token::{sign_req_id, ActionClaims},
     config::{ActionTokenConfig, SignerConfig, SignerRole, WalletRpcConfig},
     db::{SignerDb, SnapshotSigRow},
     snapshot::{
-        AmountRule, Asset, ContractSnapshot, PayoutPolicy, RecipientRule, canonical_hash_hex,
-        canonical_policy_hash_sha256_hex,
+        canonical_hash_hex, canonical_policy_hash_sha256_hex, AmountRule, Asset, ContractSnapshot,
+        PayoutPolicy, RecipientRule,
     },
+    SignerAgent,
 };
-use nxms_transport::crypto::{
-    Keys, SealedPacket, decrypt, encrypt, suite_kem_id, suite_sig_id,
-};
+use nxms_transport::crypto::{decrypt, encrypt, suite_kem_id, suite_sig_id, Keys, SealedPacket};
 use nxms_transport::peers::{Peer, PeerBook};
 use nxms_transport::wire::{
-    ESCROW_APP_PROTO_V1, EscrowAction, EscrowBody, MsgType, NxmsEnvelope, NxmsPayload,
-    TxSignReqBody, msg_type_key,
+    msg_type_key, EscrowAction, EscrowBody, MsgType, NxmsEnvelope, NxmsPayload, TxSignReqBody,
+    ESCROW_APP_PROTO_V1,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
@@ -603,7 +603,11 @@ async fn build_tx_sign_req_envelope(
     })
 }
 
-fn decode_envelope_body(env: &NxmsEnvelope, local_keys: &Keys, peer_keys: &Keys) -> Result<EscrowBody> {
+fn decode_envelope_body(
+    env: &NxmsEnvelope,
+    local_keys: &Keys,
+    peer_keys: &Keys,
+) -> Result<EscrowBody> {
     let escrow_id_raw = decode_escrow_id_hex(&env.escrow_id_hex)?;
     let sealed = SealedPacket {
         kem_ct_b64: env.kem_ct_b64.clone(),

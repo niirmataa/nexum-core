@@ -390,9 +390,10 @@ impl SignerConfig {
                 action_token.verify_rate_limit_max_keys.clamp(64, 262_144);
         }
 
-        let action_token = self.action_token.as_ref().ok_or_else(|| {
-            anyhow!("NXMS Falcon multisig mode requires [action_token] section")
-        })?;
+        let action_token = self
+            .action_token
+            .as_ref()
+            .ok_or_else(|| anyhow!("NXMS Falcon multisig mode requires [action_token] section"))?;
         if !action_token.required {
             return Err(anyhow!(
                 "NXMS Falcon multisig mode requires [action_token].required=true"
@@ -1074,7 +1075,10 @@ mod tests {
         let err = cfg
             .normalize()
             .expect_err("must reject unsupported mailbox scheme");
-        assert!(err.to_string().contains("mailbox_url scheme must be http|https"));
+        assert!(
+            err.to_string()
+                .contains("mailbox_url scheme must be http|https")
+        );
     }
 
     #[test]
@@ -1082,9 +1086,7 @@ mod tests {
         let mut cfg = base_cfg();
         cfg.production_hardening = false;
         cfg.tor_socks5h = None;
-        let err = cfg
-            .normalize()
-            .expect_err("must reject missing tor socks");
+        let err = cfg.normalize().expect_err("must reject missing tor socks");
         assert!(err.to_string().contains("tor_socks5h is required"));
     }
 
@@ -1096,7 +1098,10 @@ mod tests {
         let err = cfg
             .normalize()
             .expect_err("must reject tor_socks scheme without host resolution");
-        assert!(err.to_string().contains("tor_socks5h scheme must be socks5h"));
+        assert!(
+            err.to_string()
+                .contains("tor_socks5h scheme must be socks5h")
+        );
     }
 
     #[test]
@@ -1107,7 +1112,10 @@ mod tests {
         let err = cfg
             .normalize()
             .expect_err("must reject non-loopback tor socks endpoint");
-        assert!(err.to_string().contains("tor_socks5h host must be loopback"));
+        assert!(
+            err.to_string()
+                .contains("tor_socks5h host must be loopback")
+        );
     }
 
     #[test]

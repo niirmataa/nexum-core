@@ -1,10 +1,10 @@
 mod support;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use nxms_mailbox_client::MailboxClient;
 use nxms_transport::wire::{EscrowBody, TxSignRespBody};
 
-use support::{WorkspaceSignerHarness, policy_hash_hex, stop_agent_task, txset_sha256_hex};
+use support::{policy_hash_hex, stop_agent_task, txset_sha256_hex, WorkspaceSignerHarness};
 
 #[tokio::test]
 async fn workspace_smoke_boots_real_stack_and_clears_mailbox() -> Result<()> {

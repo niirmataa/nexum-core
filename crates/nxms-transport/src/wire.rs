@@ -217,7 +217,11 @@ impl NxmsEnvelope {
         }
         validate_b64_field_len("kem_ct_b64", &self.kem_ct_b64, NXMS_WIRE_MAX_KEM_CT_LEN)?;
         validate_b64_field_len("nonce_b64", &self.nonce_b64, NXMS_WIRE_NONCE_LEN)?;
-        validate_b64_field_len("ciphertext_b64", &self.ciphertext_b64, NXMS_WIRE_MAX_PAYLOAD)?;
+        validate_b64_field_len(
+            "ciphertext_b64",
+            &self.ciphertext_b64,
+            NXMS_WIRE_MAX_PAYLOAD,
+        )?;
         validate_b64_field_len("tag_b64", &self.tag_b64, NXMS_WIRE_TAG_LEN)?;
         validate_b64_field_len("sig_b64", &self.sig_b64, NXMS_WIRE_MAX_SIG_LEN)?;
         Ok(())

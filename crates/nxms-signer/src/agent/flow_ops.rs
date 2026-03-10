@@ -1124,7 +1124,8 @@ impl SignerAgent {
                 .await;
                 return Err(err);
             } else {
-                let err = anyhow!("action token required for submit in current signer configuration");
+                let err =
+                    anyhow!("action token required for submit in current signer configuration");
                 let detail = audit_security_detail(
                     "submit_multisig",
                     &role_for_audit,

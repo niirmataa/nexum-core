@@ -1,9 +1,9 @@
 mod support;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use nxms_transport::wire::{EscrowBody, TxSignRespBody};
 
-use support::{WorkspaceSignerHarness, policy_hash_hex, stop_agent_task, txset_sha256_hex};
+use support::{policy_hash_hex, stop_agent_task, txset_sha256_hex, WorkspaceSignerHarness};
 
 #[tokio::test]
 async fn workspace_e2e_transport_mailbox_smoke_roundtrip() -> Result<()> {
@@ -53,7 +53,9 @@ async fn workspace_e2e_transport_mailbox_smoke_roundtrip() -> Result<()> {
 
     let audit = harness.db.list_audit_logs(200).await?;
     assert!(audit.iter().any(|row| row.event_kind == "pending_enqueued"));
-    assert!(audit.iter().any(|row| row.event_kind == "decision_approved"));
+    assert!(audit
+        .iter()
+        .any(|row| row.event_kind == "decision_approved"));
 
     stop_agent_task(agent_task).await;
     Ok(())

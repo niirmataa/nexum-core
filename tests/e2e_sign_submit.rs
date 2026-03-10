@@ -1,9 +1,9 @@
 mod support;
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use nxms_transport::wire::{EscrowAction, EscrowBody, TxSignRespBody};
 
-use support::{WorkspaceSignerHarness, policy_hash_hex, stop_agent_task, txset_sha256_hex};
+use support::{policy_hash_hex, stop_agent_task, txset_sha256_hex, WorkspaceSignerHarness};
 
 #[tokio::test]
 async fn workspace_e2e_sign_submit_roundtrip() -> Result<()> {
@@ -46,7 +46,8 @@ async fn workspace_e2e_sign_submit_roundtrip() -> Result<()> {
         return Err(anyhow!("expected TxSignResp body"));
     };
     assert!(approved);
-    let signed_tx_data_hex = signed_tx_data_hex.ok_or_else(|| anyhow!("missing signed_tx_data_hex"))?;
+    let signed_tx_data_hex =
+        signed_tx_data_hex.ok_or_else(|| anyhow!("missing signed_tx_data_hex"))?;
 
     peer_client.ack(&pulled.messages[0].receipt).await?;
 
@@ -68,12 +69,10 @@ async fn workspace_e2e_sign_submit_roundtrip() -> Result<()> {
         )
         .await?;
     assert_eq!(submitted, vec!["submithash".to_string()]);
-    assert!(
-        harness
-            .wallet_calls()
-            .iter()
-            .any(|call| call == "submit_multisig")
-    );
+    assert!(harness
+        .wallet_calls()
+        .iter()
+        .any(|call| call == "submit_multisig"));
 
     let audit = harness.db.list_audit_logs(200).await?;
     assert!(audit.iter().any(|row| row.event_kind == "submit_success"));
