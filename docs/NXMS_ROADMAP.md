@@ -70,7 +70,7 @@ Każdy moduł, plik albo feature ma mieć jeden z tagów:
 ## Etap 7 — cięcie legacy
 - [ ] Usunąć stare HTTP pathy z runtime core.
 - [ ] Usunąć direct legacy sign/submit z głównego flow.
-- [ ] Oznaczyć break-glass jako awaryjne.
+- [x] Oznaczyć break-glass jako awaryjne.
 
 ## Etap 8 — Alpine/OpenRC
 - [ ] Dodać OpenRC dla mailbox, signer, orchestrator.

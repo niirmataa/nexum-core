@@ -270,22 +270,24 @@ impl SignerConfig {
                 ));
             }
         }
-        if !self.allow_remote_wallet_rpc {
-            let host = parsed_wallet_rpc_url
-                .host_str()
-                .ok_or_else(|| anyhow!("wallet_rpc.endpoint missing host"))?;
-            let is_loopback_host = host.eq_ignore_ascii_case("localhost")
-                || host
-                    .parse::<IpAddr>()
-                    .map(|ip| ip.is_loopback())
-                    .unwrap_or(false);
-            if !is_loopback_host {
-                return Err(anyhow!(
-                    "wallet_rpc.endpoint must use loopback host by default; got '{}'. \
-set allow_remote_wallet_rpc=true only for controlled break-glass scenarios",
-                    host
-                ));
-            }
+        if self.allow_remote_wallet_rpc {
+            return Err(anyhow!(
+                "allow_remote_wallet_rpc=true is no longer supported; wallet_rpc.endpoint must stay loopback-only"
+            ));
+        }
+        let host = parsed_wallet_rpc_url
+            .host_str()
+            .ok_or_else(|| anyhow!("wallet_rpc.endpoint missing host"))?;
+        let is_loopback_host = host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false);
+        if !is_loopback_host {
+            return Err(anyhow!(
+                "wallet_rpc.endpoint must use loopback host; got '{}'",
+                host
+            ));
         }
 
         self.snapshot_quorum = self.snapshot_quorum.max(1);
@@ -380,13 +382,6 @@ set allow_remote_wallet_rpc=true only for controlled break-glass scenarios",
         }
 
         if self.production_hardening {
-            if !self.allow_remote_wallet_rpc {
-                // already enforced above
-            } else {
-                return Err(anyhow!(
-                    "production_hardening=true requires allow_remote_wallet_rpc=false"
-                ));
-            }
             if self.wallet_rpc.wallet_password.trim().is_empty() {
                 return Err(anyhow!(
                     "production_hardening=true requires non-empty wallet_rpc.wallet_password"
@@ -533,15 +528,12 @@ set allow_remote_wallet_rpc=true only for controlled break-glass scenarios",
             .unwrap_or(false);
         add(
             "wallet_rpc_loopback",
-            self.allow_remote_wallet_rpc || wallet_loopback,
-            if self.allow_remote_wallet_rpc {
-                "allow_remote_wallet_rpc=true (break-glass)".to_string()
-            } else {
-                format!(
-                    "wallet_rpc host={}",
-                    wallet_host.as_deref().unwrap_or("<invalid>")
-                )
-            },
+            wallet_loopback,
+            format!(
+                "wallet_rpc host={} allow_remote_wallet_rpc={}",
+                wallet_host.as_deref().unwrap_or("<invalid>"),
+                self.allow_remote_wallet_rpc
+            ),
         );
         add(
             "action_token_required",
@@ -1052,13 +1044,15 @@ mod tests {
     }
 
     #[test]
-    fn break_glass_allows_remote_wallet_rpc_when_not_hardened() {
+    fn reject_allow_remote_wallet_rpc_true_even_when_not_hardened() {
         let mut cfg = base_cfg();
         cfg.production_hardening = false;
         cfg.allow_remote_wallet_rpc = true;
         cfg.wallet_rpc.endpoint = "http://10.0.0.5:18088".to_string();
-        cfg.normalize()
-            .expect("break-glass should pass outside hardening");
+        let err = cfg
+            .normalize()
+            .expect_err("remote wallet-rpc override must be rejected");
+        assert!(err.to_string().contains("no longer supported"));
     }
 
     #[test]
@@ -1072,7 +1066,7 @@ mod tests {
         let err = cfg
             .normalize()
             .expect_err("hardening must reject remote wallet-rpc");
-        assert!(err.to_string().contains("allow_remote_wallet_rpc=false"));
+        assert!(err.to_string().contains("no longer supported"));
     }
 
     #[test]

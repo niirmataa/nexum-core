@@ -90,7 +90,7 @@ Minimum required fields:
 - `local_id`, `peers_path`, `keys_path`, `db_path`
 - `signer_role`, `sandbox_id`, `wallet_id`, `nettype`
 - `mailbox_url`, `mailbox_token`, `worker_service_token`, `tor_socks5h`
-- `allow_remote_wallet_rpc=false` (recommended; loopback-only wallet-rpc endpoint)
+- `allow_remote_wallet_rpc=false` (required; remote wallet-rpc is not a supported runtime mode)
 - `production_hardening=true` (recommended in production)
 - `[wallet_rpc]`: endpoint + wallet credentials + digest auth credentials
 - `[wallet_provision]` (production): `enabled=true`, `wallet_cli_path`, `wallet_dir`, `daemon_address`, `timeout_secs`

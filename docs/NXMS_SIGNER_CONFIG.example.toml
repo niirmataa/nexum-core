@@ -12,7 +12,7 @@ mailbox_token = "vault:/run/secrets/nxms/mailbox_token"
 mailbox_admin_token = "vault:/run/secrets/nxms/mailbox_admin_token"
 worker_service_token = "vault:/run/secrets/nxms/worker_service_token"
 tor_socks5h = "socks5h://127.0.0.1:9050"
-allow_remote_wallet_rpc = false # keep false in production
+allow_remote_wallet_rpc = false # required; remote wallet-rpc is unsupported
 production_hardening = true
 
 snapshot_quorum = 3
