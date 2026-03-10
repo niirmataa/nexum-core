@@ -1,0 +1,15 @@
+NXMS_USER="nxms"
+NXMS_GROUP="nxms"
+NXMS_WORKDIR="/opt/nxms"
+
+NXMS_SIGNER_BIN="/opt/nxms/bin/nxms-signer"
+
+# TU WKŁADASZ PRAWDZIWE FLAGI signera
+NXMS_SIGNER_ARGS="
+  --config /etc/nxms/signer.toml
+"
+
+RUST_LOG="info"
+
+NXMS_SIGNER_STDOUT_LOG="/var/log/nxms/signer.log"
+NXMS_SIGNER_STDERR_LOG="/var/log/nxms/signer.err"

@@ -1,0 +1,48 @@
+local_id = "arbiter_a"
+signer_role = "arbiter" # arbiter | seller | buyer
+sandbox_id = "sandbox-arbiter-a"
+wallet_id = "wallet-arbiter-a"
+nettype = "stagenet" # mainnet | stagenet | testnet
+peers_path = "/etc/nxms/peers.json"
+keys_path = "/etc/nxms/keys.json"
+db_path = "/var/lib/nxms-signer/signer.db"
+
+mailbox_url = "http://exampleonionaddress.onion"
+mailbox_token = "vault:/run/secrets/nxms/mailbox_token"
+mailbox_admin_token = "vault:/run/secrets/nxms/mailbox_admin_token"
+tor_socks5h = "socks5h://127.0.0.1:9050"
+allow_remote_wallet_rpc = false # keep false in production
+production_hardening = true
+
+snapshot_quorum = 3
+pull_max = 20
+pull_wait_ms = 20000
+poll_interval_ms = 800
+default_ttl_secs = 86400
+max_txset_hex_len = 16777216
+
+[wallet_rpc]
+endpoint = "http://127.0.0.1:18088"
+wallet_name = "escrow_wallet"
+wallet_password = "vault:/run/secrets/nxms/wallet_rpc_wallet_password"
+username = "wallet-rpc-user"
+password = "vault:/run/secrets/nxms/wallet_rpc_password"
+
+[wallet_provision]
+enabled = true
+wallet_cli_path = "/usr/local/bin/monero-wallet-cli"
+wallet_dir = "/var/lib/monero/wallets"
+daemon_address = "127.0.0.1:38081"
+trusted_daemon = true
+extra_args = []
+timeout_secs = 60
+
+[action_token]
+required = true
+issuer = "nxms-auth"
+# if omitted, signer uses "sandbox:<sandbox_id>"
+audience = "sandbox:sandbox-arbiter-a"
+algorithm = "EDDSA" # EDDSA | ES256
+public_key_pem_path = "/etc/nxms/action_token_pub.pem"
+clock_skew_secs = 5
+max_ttl_secs = 120

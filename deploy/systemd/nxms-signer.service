@@ -1,0 +1,35 @@
+[Unit]
+Description=NXMS Signer Service
+After=network-online.target tor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nxms-signer
+Group=nxms-signer
+UMask=0077
+WorkingDirectory=/opt/freeforum/nexum/escrow
+EnvironmentFile=-/etc/nxms-signer.env
+ExecStart=/opt/freeforum/nexum/escrow/nxms-signer/target/release/nxms-signer run --config /etc/nxms-signer.toml
+Restart=always
+RestartSec=3
+MemoryMax=512M
+TasksMax=256
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/nxms-signer
+
+[Install]
+WantedBy=multi-user.target

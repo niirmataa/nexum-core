@@ -1,0 +1,3 @@
+pub const XMR_MULTISIG_THRESHOLD: u16 = 2;
+pub const XMR_MULTISIG_TOTAL: u16 = 3;
+pub const XMR_MULTISIG_ARBITER_INDEX: u16 = 0;

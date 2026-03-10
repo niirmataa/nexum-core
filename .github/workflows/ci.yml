@@ -1,0 +1,308 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+      - "release-*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Prepare artifact metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%Y%m%dT%H%M%SZ)"
+          ART_DIR="$RUNNER_TEMP/ci_artifacts/python-tests"
+          mkdir -p "$ART_DIR"
+          {
+            echo "timestamp_utc=$TS"
+            echo "git_sha=${GITHUB_SHA}"
+            echo "job=python-tests"
+            echo "workflow=${GITHUB_WORKFLOW}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          } > "$ART_DIR/metadata.txt"
+          echo "ART_DIR=$ART_DIR" >> "$GITHUB_ENV"
+
+      - name: Install dependencies (without optional oqs binding)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          grep -v '^oqs==' requirements.txt > /tmp/requirements-no-oqs.txt
+          python -m pip install -r /tmp/requirements-no-oqs.txt 2>&1 | tee "$ART_DIR/pip_install.log"
+
+      - name: Compile Python modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile nx_tunnel/*.py server/app/*.py server/app/routers/*.py tests/test_*.py 2>&1 | tee "$ART_DIR/python_compile.log"
+
+      - name: Run unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p "test_*.py" 2>&1 | tee "$ART_DIR/python_tests.log"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-python-tests-${{ github.sha }}
+          path: ${{ env.ART_DIR }}
+          retention-days: 30
+
+  rust-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: nxms-transport
+            path: escrow/nxms-transport
+          - crate: nxms-mailbox
+            path: escrow/nxms-mailbox
+          - crate: nxms-mailbox-client
+            path: escrow/nxms-mailbox-client
+          - crate: nxms-signer
+            path: escrow/nxms-signer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare artifact metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%Y%m%dT%H%M%SZ)"
+          ART_DIR="$RUNNER_TEMP/ci_artifacts/rust-${{ matrix.crate }}"
+          mkdir -p "$ART_DIR"
+          {
+            echo "timestamp_utc=$TS"
+            echo "git_sha=${GITHUB_SHA}"
+            echo "job=rust-tests"
+            echo "crate=${{ matrix.crate }}"
+            echo "path=${{ matrix.path }}"
+            echo "workflow=${GITHUB_WORKFLOW}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          } > "$ART_DIR/metadata.txt"
+          echo "ART_DIR=$ART_DIR" >> "$GITHUB_ENV"
+
+      - name: Run cargo tests
+        shell: bash
+        working-directory: ${{ matrix.path }}
+        run: |
+          set -euo pipefail
+          cargo test --locked --all-targets 2>&1 | tee "$ART_DIR/cargo_test.log"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-rust-${{ matrix.crate }}-${{ github.sha }}
+          path: ${{ env.ART_DIR }}
+          retention-days: 30
+
+  fuzz-sanitizer-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare artifact metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%Y%m%dT%H%M%SZ)"
+          ART_DIR="$RUNNER_TEMP/ci_artifacts/fuzz-sanitizer-smoke"
+          mkdir -p "$ART_DIR"
+          {
+            echo "timestamp_utc=$TS"
+            echo "git_sha=${GITHUB_SHA}"
+            echo "job=fuzz-sanitizer-smoke"
+            echo "workflow=${GITHUB_WORKFLOW}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          } > "$ART_DIR/metadata.txt"
+          echo "ART_DIR=$ART_DIR" >> "$GITHUB_ENV"
+
+      - name: Run fuzz-target smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path escrow/nxms-transport/Cargo.toml fuzz_target --locked 2>&1 | tee "$ART_DIR/fuzz_target_transport.log"
+          cargo test --manifest-path escrow/nxms-signer/Cargo.toml fuzz_target --locked 2>&1 | tee "$ART_DIR/fuzz_target_signer.log"
+
+      - name: Sanitizer smoke (best effort)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly --profile minimal >/dev/null 2>&1 || true
+          rustup component add rust-src --toolchain nightly >/dev/null 2>&1 || true
+          set +e
+          RUSTFLAGS="-Zsanitizer=address" \
+          cargo +nightly test \
+            --manifest-path escrow/nxms-transport/Cargo.toml \
+            --target x86_64-unknown-linux-gnu \
+            -Zbuild-std \
+            --no-run \
+            --locked >"$ART_DIR/sanitizer_transport.log" 2>&1
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            echo "sanitizer_status=ok" >> "$ART_DIR/metadata.txt"
+          else
+            echo "sanitizer_status=skipped_or_unavailable rc=$RC" >> "$ART_DIR/metadata.txt"
+          fi
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-fuzz-sanitizer-smoke-${{ github.sha }}
+          path: ${{ env.ART_DIR }}
+          retention-days: 30
+
+  security-gates:
+    runs-on: ubuntu-latest
+    needs:
+      - rust-tests
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Prepare artifact metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%Y%m%dT%H%M%SZ)"
+          ART_DIR="$RUNNER_TEMP/ci_artifacts/security-gates"
+          mkdir -p "$ART_DIR"
+          {
+            echo "timestamp_utc=$TS"
+            echo "git_sha=${GITHUB_SHA}"
+            echo "job=security-gates"
+            echo "workflow=${GITHUB_WORKFLOW}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          } > "$ART_DIR/metadata.txt"
+          echo "ART_DIR=$ART_DIR" >> "$GITHUB_ENV"
+
+      - name: Action token quorum-proof gate test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path escrow/nxms-signer/Cargo.toml verify_submit_token_requires_quorum_proof_fields --locked -- --exact 2>&1 | tee "$ART_DIR/security_action_token_quorum.log"
+
+      - name: Bridge token hardening gate test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path escrow/nxms-signer/Cargo.toml enforce_production_rejects_legacy_bridge_token_env --locked -- --exact 2>&1 | tee "$ART_DIR/security_bridge_token_hardening.log"
+
+      - name: Auth-chain lifecycle audit event test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path escrow/nxms-signer/Cargo.toml record_auth_event_persists_challenge_and_token_lifecycle --locked -- --exact 2>&1 | tee "$ART_DIR/security_auth_chain_audit.log"
+
+      - name: Build orchestrator binary for strict argv-hardening check
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path escrow/nxms-escrow-orchestrator/Cargo.toml --bin nxms-escrow-orchestrator --locked 2>&1 | tee "$ART_DIR/orchestrator_build.log"
+
+      - name: Strict argv-hardening reject evidence check
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/nxms_orch_argv_hardening_check.sh \
+            --orch-bin escrow/nxms-escrow-orchestrator/target/debug/nxms-escrow-orchestrator \
+            --artifact-root "$ART_DIR/argv_hardening" 2>&1 | tee "$ART_DIR/orchestrator_argv_hardening_check.log"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-security-gates-${{ github.sha }}
+          path: ${{ env.ART_DIR }}
+          retention-days: 30
+
+  crypto-provenance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare artifact metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%Y%m%dT%H%M%SZ)"
+          ART_DIR="$RUNNER_TEMP/ci_artifacts/crypto-provenance"
+          mkdir -p "$ART_DIR"
+          {
+            echo "timestamp_utc=$TS"
+            echo "git_sha=${GITHUB_SHA}"
+            echo "job=crypto-provenance"
+            echo "workflow=${GITHUB_WORKFLOW}"
+            echo "run_id=${GITHUB_RUN_ID}"
+            echo "run_attempt=${GITHUB_RUN_ATTEMPT}"
+          } > "$ART_DIR/metadata.txt"
+          echo "ART_DIR=$ART_DIR" >> "$GITHUB_ENV"
+
+      - name: Verify Falcon/liboqs provenance lock
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/verify_crypto_provenance.sh 2>&1 | tee "$ART_DIR/crypto_provenance.log"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-crypto-provenance-${{ github.sha }}
+          path: ${{ env.ART_DIR }}
+          retention-days: 30
+
+  release-guard:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs:
+      - python-tests
+      - rust-tests
+      - fuzz-sanitizer-smoke
+      - security-gates
+      - crypto-provenance
+    steps:
+      - name: Release checks passed
+        run: |
+          echo "Release guard passed for tag ${GITHUB_REF} at ${GITHUB_SHA}"

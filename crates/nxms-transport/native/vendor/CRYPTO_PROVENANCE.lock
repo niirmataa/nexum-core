@@ -1,0 +1,11 @@
+# NXMS cryptographic dependency provenance lock
+# Do not edit without security review.
+
+FALCON_VERSION=2020-09-30
+FALCON_VENDOR_DIR=escrow/nxms-transport/native/vendor/falcon
+FALCON_README_FILE=README.txt
+FALCON_SHA256SUMS_FILE=SHA256SUMS
+
+LIBOQS_VERSION=0.15.0
+LIBOQS_TARBALL_URL=https://github.com/open-quantum-safe/liboqs/archive/refs/tags/0.15.0.tar.gz
+LIBOQS_TARBALL_SHA256=3983f7cd1247f37fb76a040e6fd684894d44a84cecdcfbdb90559b3216684b5c

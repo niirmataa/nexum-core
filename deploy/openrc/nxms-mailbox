@@ -1,0 +1,56 @@
+#!/sbin/openrc-run
+
+name="nxms-mailbox"
+description="NXMS mailbox relay"
+
+command="${NXMS_MAILBOX_BIN:-/opt/nxms/bin/nxms-mailbox}"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="${NXMS_MAILBOX_STDOUT_LOG:-/var/log/nxms/mailbox.log}"
+error_log="${NXMS_MAILBOX_STDERR_LOG:-/var/log/nxms/mailbox.err}"
+
+: "${NXMS_USER:=nxms}"
+: "${NXMS_GROUP:=nxms}"
+: "${NXMS_WORKDIR:=/opt/nxms}"
+: "${NXMS_MAILBOX_ARGS:=}"
+
+depend() {
+    need net
+    use tor
+    after firewall
+}
+
+start_pre() {
+    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /var/lib/nxms
+    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /var/log/nxms
+    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /run
+
+    checkpath --file --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0640 "${output_log}"
+    checkpath --file --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0640 "${error_log}"
+
+    if [ ! -x "${command}" ]; then
+        eerror "binary not executable: ${command}"
+        return 1
+    fi
+}
+
+start() {
+    ebegin "Starting ${name}"
+    start-stop-daemon \
+        --start \
+        --background \
+        --make-pidfile \
+        --pidfile "${pidfile}" \
+        --chdir "${NXMS_WORKDIR}" \
+        --user "${NXMS_USER}:${NXMS_GROUP}" \
+        --stdout "${output_log}" \
+        --stderr "${error_log}" \
+        --exec "${command}" -- ${NXMS_MAILBOX_ARGS}
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping ${name}"
+    start-stop-daemon --stop --pidfile "${pidfile}" --retry TERM/20/KILL/5
+    eend $?
+}

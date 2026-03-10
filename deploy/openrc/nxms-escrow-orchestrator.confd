@@ -1,0 +1,24 @@
+NXMS_USER="nxms"
+NXMS_GROUP="nxms"
+NXMS_WORKDIR="/opt/nxms"
+
+NXMS_ORCH_BIN="/opt/nxms/bin/nxms-escrow-orchestrator"
+
+# TU WKŁADASZ PRAWDZIWE FLAGI orchestratora
+NXMS_ORCH_ARGS="
+  worker
+  --db-path /var/lib/nxms/orchestrator.db
+  --stage-timeout-ms 300000
+  --submit-timeout-ms 900000
+  --funded-min-balance 0
+  --funded-min-unlocked-balance 0
+  --max-height-lag 20
+  --tx-sign-quorum 2
+  --confirm-required 3
+  --batch-limit 100
+"
+
+RUST_LOG="info"
+
+NXMS_ORCH_STDOUT_LOG="/var/log/nxms/orchestrator.log"
+NXMS_ORCH_STDERR_LOG="/var/log/nxms/orchestrator.err"

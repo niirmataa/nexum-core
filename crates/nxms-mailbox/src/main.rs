@@ -1,0 +1,415 @@
+mod api;
+mod db;
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use axum::Router;
+use axum::extract::DefaultBodyLimit;
+use axum::routing::{get, post};
+use clap::{Parser, Subcommand};
+use tokio::sync::Notify;
+use tower_http::trace::TraceLayer;
+use tracing::info;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "nxms-mailbox",
+    version,
+    about = "NXMS mailbox (Tor onion service)"
+)]
+struct Cli {
+    #[command(subcommand)]
+    cmd: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Run the mailbox HTTP server.
+    Serve {
+        /// HTTP bind address (Tor onion service should forward to this).
+        #[arg(long, env = "NXMS_MAILBOX_BIND", default_value = "127.0.0.1:4010")]
+        bind: String,
+
+        /// SQLite DB path.
+        #[arg(long, env = "NXMS_MAILBOX_DB_PATH", default_value = "nxms_mailbox.db")]
+        db_path: String,
+
+        /// Maximum request body size in bytes.
+        #[arg(long, env = "NXMS_MAILBOX_MAX_BODY_BYTES", default_value_t = 16 * 1024 * 1024)]
+        max_body_bytes: usize,
+
+        /// Default message TTL in seconds.
+        #[arg(long, env = "NXMS_MAILBOX_DEFAULT_TTL_SECS", default_value_t = 24 * 60 * 60)]
+        default_ttl_secs: u64,
+
+        /// Maximum allowed TTL in seconds (server clamps larger values).
+        #[arg(long, env = "NXMS_MAILBOX_MAX_TTL_SECS", default_value_t = 7 * 24 * 60 * 60)]
+        max_ttl_secs: u64,
+
+        /// Lease time in seconds for pulled messages.
+        #[arg(long, env = "NXMS_MAILBOX_LEASE_SECS", default_value_t = 60)]
+        lease_secs: u64,
+
+        /// Maximum long-poll wait in milliseconds.
+        #[arg(long, env = "NXMS_MAILBOX_MAX_WAIT_MS", default_value_t = 20_000)]
+        max_wait_ms: u64,
+
+        /// Optional bearer token required for all endpoints.
+        #[arg(long, env = "NXMS_MAILBOX_TOKEN")]
+        token: Option<String>,
+
+        /// Optional admin bearer token for /v1/admin/* endpoints.
+        #[arg(long, env = "NXMS_MAILBOX_ADMIN_TOKEN")]
+        admin_token: Option<String>,
+
+        /// Periodic cleanup interval in seconds (expired messages).
+        #[arg(long, env = "NXMS_MAILBOX_CLEANUP_SECS", default_value_t = 30)]
+        cleanup_secs: u64,
+
+        /// Periodic WAL checkpoint interval in seconds.
+        #[arg(long, env = "NXMS_MAILBOX_CHECKPOINT_SECS", default_value_t = 300)]
+        checkpoint_secs: u64,
+
+        /// Hard cap of queued messages per inbox.
+        #[arg(
+            long,
+            env = "NXMS_MAILBOX_MAX_MESSAGES_PER_INBOX",
+            default_value_t = 10_000
+        )]
+        max_messages_per_inbox: u64,
+
+        /// Hard cap of queued envelope bytes per inbox.
+        #[arg(long, env = "NXMS_MAILBOX_MAX_BYTES_PER_INBOX", default_value_t = 64 * 1024 * 1024)]
+        max_bytes_per_inbox: u64,
+
+        /// Hard cap of queued messages across all inboxes.
+        #[arg(
+            long,
+            env = "NXMS_MAILBOX_MAX_ROWS_GLOBAL",
+            default_value_t = 1_000_000
+        )]
+        max_rows_global: u64,
+
+        /// Push request limit per minute for a source IP (0 disables).
+        #[arg(
+            long,
+            env = "NXMS_MAILBOX_RATE_LIMIT_IP_PER_MIN",
+            default_value_t = 300
+        )]
+        rate_limit_ip_per_min: u32,
+
+        /// Push request limit per minute for target inbox id (0 disables).
+        #[arg(
+            long,
+            env = "NXMS_MAILBOX_RATE_LIMIT_TO_PER_MIN",
+            default_value_t = 600
+        )]
+        rate_limit_to_per_min: u32,
+    },
+
+    /// Run WAL checkpoint(TRUNCATE) once and exit.
+    Checkpoint {
+        /// SQLite DB path.
+        #[arg(long, env = "NXMS_MAILBOX_DB_PATH", default_value = "nxms_mailbox.db")]
+        db_path: String,
+    },
+
+    /// Run VACUUM once and exit.
+    Vacuum {
+        /// SQLite DB path.
+        #[arg(long, env = "NXMS_MAILBOX_DB_PATH", default_value = "nxms_mailbox.db")]
+        db_path: String,
+    },
+}
+
+#[derive(Clone)]
+struct AppState {
+    db: db::SqliteMailboxDb,
+    cfg: api::ApiConfig,
+    notify: Arc<NotifyMap>,
+    rate_limits: Arc<RateLimits>,
+}
+
+fn build_app(state: AppState, max_body_bytes: usize) -> Router {
+    Router::new()
+        .route("/health", get(api::health))
+        .route("/v1/push", post(api::push))
+        .route("/v1/pull", post(api::pull))
+        .route("/v1/ack", post(api::ack))
+        .route("/v1/admin/stats", get(api::admin_stats))
+        .layer(TraceLayer::new_for_http())
+        .layer(DefaultBodyLimit::max(max_body_bytes))
+        .with_state(state)
+}
+
+#[derive(Default)]
+struct NotifyMap {
+    inner: Mutex<HashMap<String, Arc<Notify>>>,
+}
+
+impl NotifyMap {
+    fn inbox(&self, to: &str) -> Arc<Notify> {
+        let mut lock = self.inner.lock().expect("notify map lock");
+        lock.entry(to.to_string())
+            .or_insert_with(|| Arc::new(Notify::new()))
+            .clone()
+    }
+
+    fn notify_inbox(&self, to: &str) {
+        let n = self.inbox(to);
+        n.notify_waiters();
+    }
+}
+
+#[derive(Default)]
+struct FixedWindowLimiter {
+    inner: Mutex<HashMap<String, WindowCounter>>,
+}
+
+#[derive(Clone, Copy)]
+struct WindowCounter {
+    started_at: u64,
+    count: u32,
+}
+
+impl FixedWindowLimiter {
+    fn check(&self, key: &str, limit_per_min: u32, now: u64) -> Option<u64> {
+        if limit_per_min == 0 || key.trim().is_empty() {
+            return None;
+        }
+        let mut lock = self.inner.lock().expect("rate limiter lock");
+        let counter = lock.entry(key.to_string()).or_insert(WindowCounter {
+            started_at: now,
+            count: 0,
+        });
+        if now.saturating_sub(counter.started_at) >= 60 {
+            counter.started_at = now;
+            counter.count = 0;
+        }
+        if counter.count >= limit_per_min {
+            let elapsed = now.saturating_sub(counter.started_at).min(60);
+            return Some(60 - elapsed);
+        }
+        counter.count = counter.count.saturating_add(1);
+
+        if lock.len() > 50_000 {
+            lock.retain(|_, v| now.saturating_sub(v.started_at) < 120);
+        }
+        None
+    }
+}
+
+#[derive(Default)]
+struct RateLimits {
+    by_ip: FixedWindowLimiter,
+    by_to: FixedWindowLimiter,
+}
+
+impl RateLimits {
+    fn check_ip(&self, ip: &str, limit_per_min: u32) -> Option<u64> {
+        self.by_ip.check(ip, limit_per_min, now_secs())
+    }
+
+    fn check_to(&self, to: &str, limit_per_min: u32) -> Option<u64> {
+        self.by_to.check(to, limit_per_min, now_secs())
+    }
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+
+    let cli = Cli::parse();
+    match cli.cmd {
+        Command::Serve {
+            bind,
+            db_path,
+            max_body_bytes,
+            default_ttl_secs,
+            max_ttl_secs,
+            lease_secs,
+            max_wait_ms,
+            token,
+            admin_token,
+            cleanup_secs,
+            checkpoint_secs,
+            max_messages_per_inbox,
+            max_bytes_per_inbox,
+            max_rows_global,
+            rate_limit_ip_per_min,
+            rate_limit_to_per_min,
+        } => {
+            let bind_addr: SocketAddr = bind.parse()?;
+            let db_path = PathBuf::from(db_path);
+            let db = db::SqliteMailboxDb::new(db_path);
+            db.init().await?;
+
+            let cfg = api::ApiConfig {
+                token,
+                admin_token,
+                max_body_bytes,
+                default_ttl_secs,
+                max_ttl_secs,
+                lease_secs,
+                max_wait_ms,
+                limits: db::MailboxLimits {
+                    max_messages_per_inbox: max_messages_per_inbox.max(1),
+                    max_bytes_per_inbox: max_bytes_per_inbox.max(1024),
+                    max_rows_global: max_rows_global.max(1),
+                },
+                rate_limit_ip_per_min,
+                rate_limit_to_per_min,
+            };
+
+            let notify = Arc::new(NotifyMap::default());
+            let rate_limits = Arc::new(RateLimits::default());
+            let state = AppState {
+                db: db.clone(),
+                cfg,
+                notify: notify.clone(),
+                rate_limits,
+            };
+
+            // Periodic cleanup loop (expired messages).
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(cleanup_secs.max(1)));
+                let mut last_checkpoint = std::time::Instant::now();
+                loop {
+                    interval.tick().await;
+                    if let Err(err) = db.cleanup_expired().await {
+                        tracing::warn!("cleanup failed: {}", err);
+                    }
+                    if last_checkpoint.elapsed() >= Duration::from_secs(checkpoint_secs.max(1)) {
+                        if let Err(err) = db.wal_checkpoint_truncate().await {
+                            tracing::warn!("checkpoint failed: {}", err);
+                        }
+                        last_checkpoint = std::time::Instant::now();
+                    }
+                }
+            });
+
+            let app = build_app(state, max_body_bytes);
+
+            info!("nxms-mailbox listening on {}", bind_addr);
+            let listener = tokio::net::TcpListener::bind(bind_addr).await?;
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await?;
+        }
+        Command::Checkpoint { db_path } => {
+            let db = db::SqliteMailboxDb::new(PathBuf::from(db_path));
+            db.init().await?;
+            db.wal_checkpoint_truncate().await?;
+            info!("wal checkpoint completed");
+        }
+        Command::Vacuum { db_path } => {
+            let db = db::SqliteMailboxDb::new(PathBuf::from(db_path));
+            db.init().await?;
+            db.vacuum().await?;
+            info!("vacuum completed");
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::json;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tower::ServiceExt;
+
+    fn unique_db_path(label: &str) -> PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "nxms_mailbox_main_test_{label}_{}_{}.db",
+            std::process::id(),
+            ts
+        ))
+    }
+
+    #[tokio::test]
+    async fn max_body_limit_rejects_oversized_push_request() {
+        let db_path = unique_db_path("max_body");
+        let db = db::SqliteMailboxDb::new(db_path.clone());
+        db.init().await.expect("db init");
+
+        let state = AppState {
+            db,
+            cfg: api::ApiConfig {
+                token: None,
+                admin_token: Some("admin".to_string()),
+                max_body_bytes: 256,
+                default_ttl_secs: 60,
+                max_ttl_secs: 600,
+                lease_secs: 30,
+                max_wait_ms: 1000,
+                limits: db::MailboxLimits {
+                    max_messages_per_inbox: 100,
+                    max_bytes_per_inbox: 1024 * 1024,
+                    max_rows_global: 1000,
+                },
+                rate_limit_ip_per_min: 1000,
+                rate_limit_to_per_min: 1000,
+            },
+            notify: Arc::new(NotifyMap::default()),
+            rate_limits: Arc::new(RateLimits::default()),
+        };
+        let app = build_app(state, 256);
+
+        let huge = "A".repeat(2048);
+        let body = json!({
+            "envelope": {
+                "proto": "NXMS/1",
+                "kem_id": "FrodoKEM-640-SHAKE",
+                "sig_id": "Falcon-1024-CT",
+                "msg_type": "prepare_info",
+                "escrow_id_hex": "00112233445566778899aabbccddeeff",
+                "from": "alice",
+                "to": "bob",
+                "seq": 1,
+                "kem_ct_b64": huge,
+                "nonce_b64": "x",
+                "ciphertext_b64": "x",
+                "tag_b64": "x",
+                "sig_b64": "x"
+            },
+            "ttl_secs": 60
+        });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/push")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("request");
+
+        let resp = app.oneshot(req).await.expect("response");
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+}

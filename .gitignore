@@ -1,0 +1,117 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Python / caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+venv/
+.venv/
+.venv*/
+*/venv/
+*/.venv/
+
+# JS / frontend
+node_modules/
+
+# Rust / native build outputs
+target/
+**/target/
+build/
+dist/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+
+# Runtime / logs / sockets / pids
+*.log
+logs/
+*.pid
+*.sock
+nx_tunnel/state.json
+nx_tunnel/runtime.log
+
+# Environment / local config
+.env
+.env.*
+!.env.example
+*.local
+
+# Databases / local state
+*.db
+*.sqlite
+*.sqlite3
+*.wal
+*.shm
+server/*.db
+escrow/server/*.db
+
+# Secrets / keys / certs
+certs/
+server/keys/
+**/keys/
+**/identity.json
+*.key
+*.crt
+*.pem
+*.p12
+*.pfx
+*.jks
+
+# Monero / wallet artifacts
+wallets/
+*.keys
+*.address.txt
+
+# Archives / bundles / downloads
+*.tar
+*.tar.gz
+*.tar.bz2
+*.zip
+*.7z
+
+# Local generated test/live files
+live_*
+monero-wallet-*.log
+monero-wallet-cli.log
+escrow_api.live.log
+nexum_test_*.db
+monero-wallet-rpc.*.stdout
+
+# Large local-only directories
+_incoming/
+artifacts/
+monero-docs/
+captcha/
+docker-nexum/
+
+# Deprecated / local-only escrow variants
+escrow/monero-arbitra/nxms-escrow-rust/
+escrow/monero-arbitra/escrow_rust_store.json
+
+# CLI/Admin build artifacts
+nexum_cli/nexum
+nexum_admin/nexum-admin
+nexum_admin/build/
+nexum_cli/src/*.o
+nexum_cli/tests/test_*
+
+# Vendored liboqs-python clone kept local-only (contains nested .git)
+server/liboqs-python/
+
+# Visible flow local secrets/state
+VISIBLE_FLOW/ACTIVE_FLOW.env
+VISIBLE_FLOW/wallet_addresses.json
+VISIBLE_FLOW/*.local.env
+VISIBLE_FLOW/*.local.json

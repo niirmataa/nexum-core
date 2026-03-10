@@ -1,0 +1,21 @@
+# Monero wallet-rpc split-role config (example)
+# Secrets live here, not in process argv. Keep mode 0600 and owner = role user.
+
+stagenet=1
+
+# Role-specific wallet directory (buyer/seller/arbiter)
+wallet-dir=/var/lib/monero/real3p_CURRENT/buyer
+
+# Monerod (trusted local daemon)
+daemon-address=127.0.0.1:38081
+trusted-daemon=1
+
+# Local-only RPC
+rpc-bind-ip=127.0.0.1
+rpc-bind-port=48184
+rpc-login=REPLACE_ME_USER:REPLACE_ME_PASS
+
+non-interactive=1
+no-initial-sync=1
+log-level=0
+log-file=/var/lib/monero/real3p_CURRENT/logs/buyer-rpc-secure.log

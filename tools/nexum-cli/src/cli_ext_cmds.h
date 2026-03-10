@@ -1,0 +1,300 @@
+#pragma once
+
+int cmd_prekeys_gen(const char *dir, const char *kem_id_opt, int count, int ttl_days);
+int cmd_prekeys_upload(const char *dir, const char *base, const char *socks5, int limit);
+int cmd_prekeys_rotate(const char *dir, const char *base, const char *socks5,
+                       const char *kem_id_opt, int count, int min, int ttl_days);
+int cmd_tor_check(const char *base, const char *socks5_in);
+int cmd_preflight_escrow(const char *base,
+                         const char *socks5_in,
+                         const char *ui_base,
+                         int require_ui,
+                         int json_output,
+                         const char *run_dir,
+                         const char *orch_db,
+                         const char *orch_bin,
+                         const char *escrow_id_hex,
+                         int strict_daemon_sync,
+                         int allow_bootstrap,
+                         int strict_wallet_multisig,
+                         int check_transfer_dry_run,
+                         unsigned timeout_ms,
+                         int verbose);
+int cmd_dm_send(const char *dir, const char *base, const char *socks5,
+                const char *to_nick, const char *msg, const char *file_path);
+int cmd_dm_inbox(const char *dir, const char *base, const char *socks5, int limit, int keep);
+int cmd_prekeys_list(const char *dir, int verbose);
+int cmd_prekeys_prune(const char *dir, int prune_used, int prune_expired);
+
+int cmd_escrow_proposal_show(const char *base, const char *socks5,
+                             unsigned long long escrow_id,
+                             const char *nick, const char *token);
+
+int cmd_escrow_create(const char *base, const char *socks5,
+                      const char *buyer_nick, const char *seller_nick,
+                      unsigned long long amount_atomic,
+                      const char *memo,
+                      const char *buyer_refund_address,
+                      const char *idempotency_key,
+                      const char *run_dir);
+
+int cmd_escrow_status(const char *base, const char *socks5,
+                      unsigned long long escrow_id,
+                      const char *nick, const char *token,
+                      const char *run_dir);
+
+int cmd_escrow_r1(const char *base,
+                  const char *socks5,
+                  unsigned long long escrow_id,
+                  const char *nick,
+                  const char *token,
+                  const char *wallet_rpc_url,
+                  const char *wallet_rpc_user,
+                  const char *wallet_rpc_pass,
+                  const char *wallet_name,
+                  const char *wallet_password_env,
+                  const char *refund_address,
+                  const char *idempotency_prefix,
+                  unsigned timeout_s,
+                  unsigned retry_max,
+                  unsigned poll_interval_s);
+
+int cmd_escrow_r2(const char *base,
+                  const char *socks5,
+                  unsigned long long escrow_id,
+                  const char *nick,
+                  const char *token,
+                  const char *wallet_rpc_url,
+                  const char *wallet_rpc_user,
+                  const char *wallet_rpc_pass,
+                  const char *wallet_name,
+                  const char *wallet_password_env,
+                  int threshold,
+                  const char *idempotency_prefix,
+                  unsigned timeout_s,
+                  unsigned retry_max,
+                  unsigned poll_interval_s);
+
+int cmd_escrow_r3(const char *base,
+                  const char *socks5,
+                  unsigned long long escrow_id,
+                  const char *nick,
+                  const char *token,
+                  const char *wallet_rpc_url,
+                  const char *wallet_rpc_user,
+                  const char *wallet_rpc_pass,
+                  const char *wallet_name,
+                  const char *wallet_password_env,
+                  const char *idempotency_prefix,
+                  unsigned timeout_s,
+                  unsigned retry_max,
+                  unsigned poll_interval_s);
+
+int cmd_escrow_r4(const char *base,
+                  const char *socks5,
+                  unsigned long long escrow_id,
+                  const char *nick,
+                  const char *token,
+                  const char *wallet_rpc_url,
+                  const char *wallet_rpc_user,
+                  const char *wallet_rpc_pass,
+                  const char *wallet_name,
+                  const char *wallet_password_env,
+                  unsigned timeout_s);
+
+int cmd_escrow_gate3_ready(const char *base,
+                           const char *socks5,
+                           unsigned long long escrow_id,
+                           const char *buyer_nick,
+                           const char *buyer_token,
+                           const char *seller_nick,
+                           const char *seller_token,
+                           const char *seller_token_db_path,
+                           const char *buyer_wallet_rpc_url,
+                           const char *buyer_wallet_rpc_user,
+                           const char *buyer_wallet_rpc_pass,
+                           const char *buyer_wallet_name,
+                           const char *buyer_wallet_password_env,
+                           const char *seller_wallet_rpc_url,
+                           const char *seller_wallet_rpc_user,
+                           const char *seller_wallet_rpc_pass,
+                           const char *seller_wallet_name,
+                           const char *seller_wallet_password_env,
+                           const char *buyer_refund_address,
+                           const char *seller_refund_address,
+                           const char *idempotency_prefix,
+                           const char *run_dir,
+                           unsigned wait_ready_timeout_s,
+                           unsigned poll_interval_s,
+                           unsigned timeout_s,
+                           unsigned round_retries);
+
+int cmd_escrow_fund(const char *base,
+                    const char *socks5,
+                    unsigned long long escrow_id,
+                    const char *buyer_nick,
+                    const char *buyer_token,
+                    const char *wallet_rpc_url,
+                    const char *wallet_rpc_user,
+                    const char *wallet_rpc_pass,
+                    const char *wallet_name,
+                    const char *wallet_password_env,
+                    const char *run_dir,
+                    unsigned long long fund_buffer_atomic,
+                    unsigned timeout_s);
+
+int cmd_escrow_wait_funded(const char *base,
+                           const char *socks5,
+                           unsigned long long escrow_id,
+                           const char *nick,
+                           const char *token,
+                           const char *run_dir,
+                           unsigned wait_timeout_s,
+                           unsigned poll_interval_s);
+
+int cmd_escrow_wait_state(const char *base,
+                          const char *socks5,
+                          unsigned long long escrow_id,
+                          const char *nick,
+                          const char *token,
+                          const char *target_state,
+                          const char *run_dir,
+                          unsigned wait_timeout_s,
+                          unsigned poll_interval_s);
+
+int cmd_escrow_funded_sync(const char *orch_bin_opt,
+                           const char *base,
+                           const char *socks5,
+                           int allow_non_tor,
+                           unsigned long long escrow_id,
+                           const char *buyer_nick,
+                           const char *buyer_token,
+                           const char *arbiter_nick,
+                           const char *arbiter_token,
+                           const char *arbiter_token_fallback,
+                           const char *buyer_rpc_endpoint,
+                           const char *buyer_rpc_user,
+                           const char *buyer_rpc_pass,
+                           const char *buyer_wallet_name,
+                           const char *buyer_wallet_pass,
+                           const char *seller_rpc_endpoint,
+                           const char *seller_rpc_user,
+                           const char *seller_rpc_pass,
+                           const char *seller_wallet_name,
+                           const char *seller_wallet_pass,
+                           const char *run_dir,
+                           unsigned funded_timeout_s,
+                           unsigned poll_interval_s,
+                           unsigned http_timeout_s);
+
+int cmd_escrow_release(const char *base, const char *socks5,
+                       unsigned long long escrow_id,
+                       const char *nick, const char *token,
+                       const char *tx_data_hex, const char *txid,
+                       const char *signer_wallet_password,
+                       const char *signer_action_token,
+                       const char *signer_action_token_file,
+                       const char *signer_action_token_env,
+                       const char *signer_sign_action_token,
+                       const char *signer_sign_action_token_file,
+                       const char *signer_sign_action_token_env,
+                       const char *signer_submit_action_token,
+                       const char *signer_submit_action_token_file,
+                       const char *signer_submit_action_token_env,
+                       const char *idempotency_key,
+                       int retry_max,
+                       unsigned retry_backoff_ms);
+
+int cmd_escrow_refund(const char *base, const char *socks5,
+                      unsigned long long escrow_id,
+                      const char *nick, const char *token,
+                      const char *tx_data_hex, const char *txid,
+                      const char *signer_action_token,
+                      const char *signer_action_token_file,
+                      const char *signer_action_token_env,
+                      const char *idempotency_key,
+                      int retry_max,
+                      unsigned retry_backoff_ms);
+
+int cmd_escrow_confirm_release(const char *base,
+                               const char *socks5,
+                               unsigned long long escrow_id,
+                               const char *nick,
+                               const char *token,
+                               const char *txid,
+                               const char *idempotency_prefix,
+                               int retry_max,
+                               unsigned retry_backoff_ms);
+
+int cmd_escrow_confirm_refund(const char *base,
+                              const char *socks5,
+                              unsigned long long escrow_id,
+                              const char *nick,
+                              const char *token,
+                              const char *txid,
+                              const char *idempotency_prefix,
+                              int retry_max,
+                              unsigned retry_backoff_ms);
+
+int cmd_escrow_release_pipeline(
+    const char *base,
+    const char *socks5,
+    unsigned long long escrow_id,
+    const char *seller_nick,
+    const char *seller_token,
+    const char *arbiter_nick,
+    const char *arbiter_token,
+    const char *seller_wallet_password,
+    const char *seller_signer_action_token,
+    const char *seller_signer_action_token_file,
+    const char *seller_signer_action_token_env,
+    const char *seller_signer_sign_action_token,
+    const char *seller_signer_sign_action_token_file,
+    const char *seller_signer_sign_action_token_env,
+    const char *seller_signer_submit_action_token,
+    const char *seller_signer_submit_action_token_file,
+    const char *seller_signer_submit_action_token_env,
+    const char *arbiter_signer_action_token,
+    const char *arbiter_signer_action_token_file,
+    const char *arbiter_signer_action_token_env,
+    const char *arbiter_signer_submit_action_token,
+    const char *arbiter_signer_submit_action_token_file,
+    const char *arbiter_signer_submit_action_token_env,
+    const char *idempotency_prefix,
+    int retry_max,
+    unsigned retry_backoff_ms
+);
+
+int cmd_escrow_arbiter_token(unsigned long long escrow_id,
+                             const char *master_token);
+
+int cmd_escrow_token_from_db(const char *db_path,
+                             unsigned long long escrow_id,
+                             const char *role_label);
+
+int cmd_env_export_visible_flow(const char *out_dir,
+                                const char *base_url,
+                                const char *db_path,
+                                const char *nx_conf_path,
+                                const char *real3p_env_path,
+                                int include_real3p,
+                                int include_tokens,
+                                int include_config_secrets);
+
+int cmd_worker_route_set(const char *orch_bin_opt,
+                         const char *orch_db_path_opt,
+                         const char *escrow_id_hex,
+                         const char *role,
+                         const char *endpoint);
+
+int cmd_worker_route_show(const char *orch_bin_opt,
+                          const char *orch_db_path_opt,
+                          const char *escrow_id_hex,
+                          const char *role);
+
+int cmd_worker_route_reconcile(const char *orch_bin_opt,
+                               const char *orch_db_path_opt,
+                               unsigned long long stale_after_ms,
+                               int include_terminal,
+                               unsigned limit,
+                               int fail_on_findings);
