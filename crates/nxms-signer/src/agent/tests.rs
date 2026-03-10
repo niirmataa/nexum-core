@@ -2748,6 +2748,153 @@ async fn transport_mailbox_signer_smoke_flow_uses_real_mailbox_app() {
 }
 
 #[tokio::test]
+async fn transport_sign_submit_smoke_flow_uses_real_mailbox_app() {
+    let (mailbox_url, mailbox_db_path) =
+        spawn_real_mailbox_server("transport_sign_submit_smoke").await;
+    let wallet_state = Arc::new(WalletMockState::default());
+    let wallet_url = spawn_server(
+        Router::new()
+            .route("/json_rpc", post(wallet_rpc_handler))
+            .with_state(wallet_state.clone()),
+    )
+    .await;
+
+    let local_keys = Keys::generate().expect("local keys");
+    let peer_keys = Keys::generate().expect("peer keys");
+    let signer_db_path = unique_db_path("transport_sign_submit_smoke");
+    let mut agent = make_agent(
+        mailbox_url.clone(),
+        wallet_url,
+        signer_db_path.clone(),
+        clone_keys(&local_keys),
+        clone_keys(&peer_keys),
+    )
+    .await;
+    let fixture = install_action_token_verifier(&mut agent, true, "transport-sign-submit-smoke");
+
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&agent.db, escrow_id_hex).await;
+    let snapshot_hash = canonical_hash_hex(&snapshot).expect("snapshot hash");
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+
+    let ingress_client = MailboxClient::builder(&mailbox_url)
+        .expect("ingress builder")
+        .push_token("push-token-123456")
+        .build()
+        .expect("ingress client");
+    let req_env = build_tx_sign_req_envelope(
+        &local_keys,
+        &peer_keys,
+        escrow_id_hex,
+        &snapshot_hash,
+        1,
+    )
+    .await;
+    ingress_client
+        .push(&req_env, Some(60))
+        .await
+        .expect("push inbound envelope");
+
+    let pulled = agent.mailbox_pull_with_retry().await.expect("signer pull");
+    assert_eq!(pulled.messages.len(), 1);
+    let receipt = pulled.messages[0].receipt.clone();
+    agent
+        .process_envelope(pulled.messages[0].envelope.clone())
+        .await
+        .expect("process inbound envelope");
+    agent
+        .mailbox_ack_with_retry(&receipt)
+        .await
+        .expect("ack inbound receipt");
+
+    let pending = agent.db.list_pending().await.expect("list pending");
+    assert_eq!(pending.len(), 1);
+    let txset_hash = pending[0].txset_hash_hex.clone();
+    let sign_jti = "jti-transport-sign-submit-smoke";
+    let sign_token = build_sign_action_token(
+        &agent,
+        &fixture,
+        escrow_id_hex,
+        &txset_hash,
+        &snapshot_hash_for_token,
+        sign_jti,
+    );
+    agent
+        .approve_pending(pending[0].id, Some(&sign_token))
+        .await
+        .expect("approve pending");
+
+    let peer_client = MailboxClient::builder(&mailbox_url)
+        .expect("peer builder")
+        .pull_token("peer1-pull-token-123456")
+        .ack_token("peer1-ack-token-123456")
+        .admin_token("admin-token-123456")
+        .build()
+        .expect("peer client");
+    let peer_pulled = peer_client
+        .pull("peer1", Some(1), Some(0))
+        .await
+        .expect("pull outbound envelope");
+    assert_eq!(peer_pulled.messages.len(), 1);
+    let body = decode_push_body(
+        &serde_json::json!({"envelope": peer_pulled.messages[0].envelope}),
+        &local_keys,
+        &peer_keys,
+    );
+    let EscrowBody::TxSignResp(resp) = body else {
+        panic!("expected TxSignResp body");
+    };
+    assert!(resp.approved);
+    let signed_tx_data_hex = resp
+        .signed_tx_data_hex
+        .clone()
+        .expect("signed tx data");
+    peer_client
+        .ack(&peer_pulled.messages[0].receipt)
+        .await
+        .expect("ack outbound receipt");
+
+    let proof_arbiter_req_id =
+        sign_req_id(escrow_id_hex, "sign_multisig", "arbiter_first", &txset_hash);
+    let proof_seller_jti = "seller-proof-jti-transport-sign-submit";
+    let proof_seller_req_id =
+        sign_req_id(escrow_id_hex, "sign_multisig", "seller_second", &txset_hash);
+    let submit_token = build_submit_action_token(
+        &agent,
+        &fixture,
+        escrow_id_hex,
+        &txset_hash,
+        &snapshot_hash_for_token,
+        "jti-submit-transport-sign-submit",
+        sign_jti,
+        &proof_arbiter_req_id,
+        proof_seller_jti,
+        &proof_seller_req_id,
+    );
+    let submitted = agent
+        .submit_multisig_flow(
+            escrow_id_hex,
+            EscrowAction::Release,
+            &signed_tx_data_hex,
+            Some(&submit_token),
+        )
+        .await
+        .expect("submit multisig");
+    assert_eq!(submitted, vec!["submithash".to_string()]);
+    assert!(wallet_calls(&wallet_state).contains(&"submit_multisig".to_string()));
+
+    let audit = agent.db.list_audit_logs(200).await.expect("audit list");
+    assert!(audit.iter().any(|e| e.event_kind == "submit_success"));
+
+    let stats = peer_client.admin_stats().await.expect("admin stats");
+    assert_eq!(stats.total_rows, 0);
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&signer_db_path);
+    remove_file_quiet(&mailbox_db_path);
+}
+
+#[tokio::test]
 async fn approve_pending_retry_from_approved_sending_resends_without_resign() {
     let mut h = setup_harness("approve_retry_approved_sending").await;
     let fixture = install_action_token_verifier(&mut h.agent, true, "retry-approved-sending");
