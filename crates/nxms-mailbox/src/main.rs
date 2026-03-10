@@ -401,6 +401,8 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use nxms_mailbox_client::MailboxClient;
+    use nxms_transport::wire::{MsgType, NXMS_PROTO_V1, NxmsEnvelope};
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tower::ServiceExt;
@@ -453,6 +455,74 @@ mod tests {
             std::process::id(),
             ts
         ))
+    }
+
+    fn sample_envelope(to: &str, seq: u64) -> NxmsEnvelope {
+        NxmsEnvelope {
+            proto: NXMS_PROTO_V1.to_string(),
+            kem_id: "FrodoKEM-640-SHAKE".to_string(),
+            sig_id: "Falcon-1024-CT".to_string(),
+            msg_type: MsgType::PrepareInfo,
+            escrow_id_hex: "0".repeat(32),
+            from: "alice".to_string(),
+            to: to.to_string(),
+            seq,
+            kem_ct_b64: "x".to_string(),
+            nonce_b64: "x".to_string(),
+            ciphertext_b64: "x".to_string(),
+            tag_b64: "x".to_string(),
+            sig_b64: "x".to_string(),
+        }
+    }
+
+    async fn spawn_mailbox_server(label: &str) -> (String, PathBuf) {
+        let db_path = unique_db_path(label);
+        let db = db::SqliteMailboxDb::new(db_path.clone());
+        db.init().await.expect("db init");
+
+        let state = AppState {
+            db,
+            cfg: api::ApiConfig {
+                push_token: Some("push-token".to_string()),
+                pull_tokens: HashMap::from([
+                    ("bob".to_string(), "pull-token-bob".to_string()),
+                    ("carol".to_string(), "pull-token-carol".to_string()),
+                ]),
+                ack_tokens: HashMap::from([
+                    ("bob".to_string(), "ack-token-bob".to_string()),
+                    ("carol".to_string(), "ack-token-carol".to_string()),
+                ]),
+                admin_token: Some("admin".to_string()),
+                max_body_bytes: 1024 * 1024,
+                default_ttl_secs: 60,
+                max_ttl_secs: 600,
+                lease_secs: 1,
+                max_wait_ms: 1000,
+                limits: db::MailboxLimits {
+                    max_messages_per_inbox: 100,
+                    max_bytes_per_inbox: 1024 * 1024,
+                    max_rows_global: 1000,
+                },
+                rate_limit_ip_per_min: 1000,
+                rate_limit_to_per_min: 1000,
+            },
+            notify: Arc::new(NotifyMap::default()),
+            rate_limits: Arc::new(RateLimits::default()),
+        };
+        let app = build_app(state, 1024 * 1024);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await;
+        });
+
+        (format!("http://{}", addr), db_path)
     }
 
     #[tokio::test]
@@ -516,6 +586,68 @@ mod tests {
 
         let resp = app.oneshot(req).await.expect("response");
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn mailbox_client_smoke_roundtrip_against_real_mailbox_app() {
+        let (base_url, db_path) = spawn_mailbox_server("client_smoke").await;
+        let client = MailboxClient::builder(&base_url)
+            .expect("builder")
+            .push_token("push-token")
+            .pull_token("pull-token-bob")
+            .ack_token("ack-token-bob")
+            .admin_token("admin")
+            .build()
+            .expect("client");
+
+        client.health().await.expect("health");
+        let pushed = client
+            .push(&sample_envelope("bob", 1), Some(60))
+            .await
+            .expect("push");
+        assert!(pushed.ok);
+        assert!(!pushed.dedup);
+
+        let pulled = client.pull("bob", Some(1), Some(0)).await.expect("pull");
+        assert_eq!(pulled.messages.len(), 1);
+        assert_eq!(pulled.messages[0].envelope.seq, 1);
+
+        client
+            .ack(&pulled.messages[0].receipt)
+            .await
+            .expect("ack");
+
+        let stats = client.admin_stats().await.expect("admin stats");
+        assert_eq!(stats.total_rows, 0);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn mailbox_client_fail_closed_on_wrong_pull_scope_against_real_mailbox_app() {
+        let (base_url, db_path) = spawn_mailbox_server("client_wrong_scope").await;
+        let push_client = MailboxClient::builder(&base_url)
+            .expect("builder")
+            .push_token("push-token")
+            .build()
+            .expect("push client");
+        push_client
+            .push(&sample_envelope("bob", 1), Some(60))
+            .await
+            .expect("push");
+
+        let wrong_scope_client = MailboxClient::builder(&base_url)
+            .expect("builder")
+            .pull_token("pull-token-carol")
+            .build()
+            .expect("wrong scope client");
+        let err = wrong_scope_client
+            .pull("bob", Some(1), Some(0))
+            .await
+            .expect_err("wrong scope pull must fail closed");
+        assert!(err.to_string().contains("mailbox http 401"));
 
         let _ = std::fs::remove_file(db_path);
     }

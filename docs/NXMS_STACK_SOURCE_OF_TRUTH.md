@@ -120,6 +120,12 @@ Docelowy model:
 - brak publicznych bindów bez powodu
 - komunikacja między hostami przez onion / Tor
 
+Doprecyzowanie granic:
+- `Tor hidden service` jest jedyną docelową ścieżką sieciową między hostami.
+- `nxms-transport` jest jedyną warstwą end-to-end dla szyfrowania, podpisów, integralności i message binding.
+- lokalne HTTP/API procesów, np. `nxms-mailbox` na `127.0.0.1`, jest wyłącznie local process adapter boundary.
+- lokalne HTTP/API nie jest samodzielną warstwą bezpieczeństwa runtime i nie zastępuje `nxms-transport` ani Tora.
+
 ---
 
 ## 10. Czego nie robimy

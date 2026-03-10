@@ -21,3 +21,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+nxms-mailbox-client = { path = "../nxms-mailbox-client" }

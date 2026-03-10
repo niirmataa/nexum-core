@@ -7,6 +7,9 @@ Scope: `nxms-mailbox` truth-guarding tests for the canonical relay/store-and-for
 - P0 mailbox behavior is not considered real unless a concrete test covers it.
 - Mailbox is only relay/store-and-forward. It must not silently widen auth or alter transport semantics.
 - Cross-host security still belongs to `Tor + nxms-transport`; mailbox must stay fail-closed as a scoped relay.
+- Local `HTTP/axum` in mailbox is only a process adapter boundary on loopback.
+- Tests using local `HTTP/axum` prove the real mailbox process API and client integration.
+- These tests do not claim that HTTP is the runtime security layer; that role remains `Tor + nxms-transport`.
 
 ## Runtime Truths Guarded Here
 - `push` requires its own bearer token.
@@ -43,6 +46,9 @@ Scope: `nxms-mailbox` truth-guarding tests for the canonical relay/store-and-for
 - `ack scope`
   `db::tests::ack_requires_matching_inbox_scope`
   `api::tests::ack_is_scoped_to_receipt_inbox`
+- `mailbox-client <-> mailbox local adapter boundary`
+  `tests::mailbox_client_smoke_roundtrip_against_real_mailbox_app`
+  `tests::mailbox_client_fail_closed_on_wrong_pull_scope_against_real_mailbox_app`
 
 ## Real Gate For This Stage
 Run at minimum:
@@ -52,6 +58,8 @@ cargo test -p nxms-mailbox smoke_push_pull_ack_roundtrip_via_api -- --nocapture
 cargo test -p nxms-mailbox pull_rejects_unconfigured_inbox_even_with_valid_other_scope_token -- --nocapture
 cargo test -p nxms-mailbox ack_is_scoped_to_receipt_inbox -- --nocapture
 cargo test -p nxms-mailbox restart_recovery_redelivers_leased_message_after_reopen -- --nocapture
+cargo test -p nxms-mailbox mailbox_client_smoke_roundtrip_against_real_mailbox_app -- --nocapture
+cargo test -p nxms-mailbox mailbox_client_fail_closed_on_wrong_pull_scope_against_real_mailbox_app -- --nocapture
 ```
 
 Preferred full mailbox gate:
