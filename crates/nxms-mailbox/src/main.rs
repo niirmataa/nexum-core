@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use nxms_mailbox::{AppState, api, build_app, db};
+use nxms_mailbox::{AppState, build_app, config::MailboxConfig, db};
 use tracing::info;
 
 #[derive(Parser, Debug)]
@@ -22,6 +22,10 @@ struct Cli {
 enum Command {
     /// Run the mailbox HTTP server.
     Serve {
+        /// TOML config path. Recommended for production because it supports secret refs.
+        #[arg(long, env = "NXMS_MAILBOX_CONFIG")]
+        config: Option<PathBuf>,
+
         /// HTTP bind address (Tor onion service should forward to this).
         #[arg(long, env = "NXMS_MAILBOX_BIND", default_value = "127.0.0.1:4010")]
         bind: String,
@@ -113,6 +117,10 @@ enum Command {
 
     /// Run WAL checkpoint(TRUNCATE) once and exit.
     Checkpoint {
+        /// TOML config path. If set, db_path is read from config.
+        #[arg(long, env = "NXMS_MAILBOX_CONFIG")]
+        config: Option<PathBuf>,
+
         /// SQLite DB path.
         #[arg(long, env = "NXMS_MAILBOX_DB_PATH", default_value = "nxms_mailbox.db")]
         db_path: String,
@@ -120,6 +128,10 @@ enum Command {
 
     /// Run VACUUM once and exit.
     Vacuum {
+        /// TOML config path. If set, db_path is read from config.
+        #[arg(long, env = "NXMS_MAILBOX_CONFIG")]
+        config: Option<PathBuf>,
+
         /// SQLite DB path.
         #[arg(long, env = "NXMS_MAILBOX_DB_PATH", default_value = "nxms_mailbox.db")]
         db_path: String,
@@ -161,7 +173,10 @@ fn require_scoped_tokens(
         if inbox.is_empty() || token.is_empty() {
             return Err(format!("{name} entries must have non-empty inbox and token").into());
         }
-        if tokens.insert(inbox.to_string(), token.to_string()).is_some() {
+        if tokens
+            .insert(inbox.to_string(), token.to_string())
+            .is_some()
+        {
             return Err(format!("{name} contains duplicate inbox `{inbox}`").into());
         }
         if !seen_token_values.insert(token.to_string()) {
@@ -187,6 +202,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.cmd {
         Command::Serve {
+            config,
             bind,
             db_path,
             max_body_bytes,
@@ -206,33 +222,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             rate_limit_ip_per_min,
             rate_limit_to_per_min,
         } => {
-            let bind_addr: SocketAddr = bind.parse()?;
-            let db_path = PathBuf::from(db_path);
-            let db = db::SqliteMailboxDb::new(db_path);
-            db.init().await?;
-            let push_token = require_token("NXMS_MAILBOX_PUSH_TOKEN", push_token)?;
-            let pull_tokens = require_scoped_tokens("NXMS_MAILBOX_PULL_TOKENS", pull_tokens)?;
-            let ack_tokens = require_scoped_tokens("NXMS_MAILBOX_ACK_TOKENS", ack_tokens)?;
-            let admin_token = require_token("NXMS_MAILBOX_ADMIN_TOKEN", admin_token)?;
-
-            let cfg = api::ApiConfig {
-                push_token: Some(push_token),
-                pull_tokens,
-                ack_tokens,
-                admin_token: Some(admin_token),
-                max_body_bytes,
-                default_ttl_secs,
-                max_ttl_secs,
-                lease_secs,
-                max_wait_ms,
-                limits: db::MailboxLimits {
-                    max_messages_per_inbox: max_messages_per_inbox.max(1),
-                    max_bytes_per_inbox: max_bytes_per_inbox.max(1024),
-                    max_rows_global: max_rows_global.max(1),
-                },
-                rate_limit_ip_per_min,
-                rate_limit_to_per_min,
+            let loaded = if let Some(config_path) = config {
+                MailboxConfig::from_toml_path(config_path)?
+            } else {
+                MailboxConfig {
+                    bind,
+                    db_path: PathBuf::from(db_path),
+                    max_body_bytes,
+                    default_ttl_secs,
+                    max_ttl_secs,
+                    lease_secs,
+                    max_wait_ms,
+                    push_token: require_token("NXMS_MAILBOX_PUSH_TOKEN", push_token)?,
+                    pull_tokens: require_scoped_tokens("NXMS_MAILBOX_PULL_TOKENS", pull_tokens)?,
+                    ack_tokens: require_scoped_tokens("NXMS_MAILBOX_ACK_TOKENS", ack_tokens)?,
+                    admin_token: require_token("NXMS_MAILBOX_ADMIN_TOKEN", admin_token)?,
+                    cleanup_secs,
+                    checkpoint_secs,
+                    max_messages_per_inbox,
+                    max_bytes_per_inbox,
+                    max_rows_global,
+                    rate_limit_ip_per_min,
+                    rate_limit_to_per_min,
+                    production_hardening: false,
+                }
             };
+            let bind_addr: SocketAddr = loaded.bind_addr()?;
+            let db = db::SqliteMailboxDb::new(loaded.db_path.clone());
+            db.init().await?;
+            let cleanup_secs = loaded.cleanup_secs;
+            let checkpoint_secs = loaded.checkpoint_secs;
+            let max_body_bytes = loaded.max_body_bytes;
+            let cfg = loaded.api_config();
 
             let state = AppState::new(db.clone(), cfg);
 
@@ -264,14 +285,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
         }
-        Command::Checkpoint { db_path } => {
-            let db = db::SqliteMailboxDb::new(PathBuf::from(db_path));
+        Command::Checkpoint { config, db_path } => {
+            let db_path = if let Some(config_path) = config {
+                MailboxConfig::from_toml_path(config_path)?.db_path
+            } else {
+                PathBuf::from(db_path)
+            };
+            let db = db::SqliteMailboxDb::new(db_path);
             db.init().await?;
             db.wal_checkpoint_truncate().await?;
             info!("wal checkpoint completed");
         }
-        Command::Vacuum { db_path } => {
-            let db = db::SqliteMailboxDb::new(PathBuf::from(db_path));
+        Command::Vacuum { config, db_path } => {
+            let db_path = if let Some(config_path) = config {
+                MailboxConfig::from_toml_path(config_path)?.db_path
+            } else {
+                PathBuf::from(db_path)
+            };
+            let db = db::SqliteMailboxDb::new(db_path);
             db.init().await?;
             db.vacuum().await?;
             info!("vacuum completed");
@@ -286,6 +317,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use nxms_mailbox::api;
     use nxms_mailbox_client::MailboxClient;
     use nxms_transport::wire::{MsgType, NXMS_PROTO_V1, NxmsEnvelope};
     use serde_json::json;
@@ -313,21 +345,23 @@ mod tests {
         assert_eq!(parsed.get("bob"), Some(&"token-b".to_string()));
 
         assert!(require_scoped_tokens("NXMS_MAILBOX_PULL_TOKENS", None).is_err());
-        assert!(require_scoped_tokens(
-            "NXMS_MAILBOX_PULL_TOKENS",
-            Some("alice=".to_string())
-        )
-        .is_err());
-        assert!(require_scoped_tokens(
-            "NXMS_MAILBOX_PULL_TOKENS",
-            Some("alice=shared,bob=shared".to_string())
-        )
-        .is_err());
-        assert!(require_scoped_tokens(
-            "NXMS_MAILBOX_PULL_TOKENS",
-            Some("alice=a,alice=b".to_string())
-        )
-        .is_err());
+        assert!(
+            require_scoped_tokens("NXMS_MAILBOX_PULL_TOKENS", Some("alice=".to_string())).is_err()
+        );
+        assert!(
+            require_scoped_tokens(
+                "NXMS_MAILBOX_PULL_TOKENS",
+                Some("alice=shared,bob=shared".to_string())
+            )
+            .is_err()
+        );
+        assert!(
+            require_scoped_tokens(
+                "NXMS_MAILBOX_PULL_TOKENS",
+                Some("alice=a,alice=b".to_string())
+            )
+            .is_err()
+        );
     }
 
     fn unique_db_path(label: &str) -> PathBuf {
@@ -495,10 +529,7 @@ mod tests {
         assert_eq!(pulled.messages.len(), 1);
         assert_eq!(pulled.messages[0].envelope.seq, 1);
 
-        client
-            .ack(&pulled.messages[0].receipt)
-            .await
-            .expect("ack");
+        client.ack(&pulled.messages[0].receipt).await.expect("ack");
 
         let stats = client.admin_stats().await.expect("admin stats");
         assert_eq!(stats.total_rows, 0);

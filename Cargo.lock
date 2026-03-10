@@ -929,6 +929,7 @@ dependencies = [
 name = "nxms-mailbox"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum",
  "clap",
  "hex",
@@ -939,6 +940,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "toml",
  "tower",
  "tower-http 0.5.2",
  "tracing",

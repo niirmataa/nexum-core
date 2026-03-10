@@ -1,0 +1,28 @@
+bind = "127.0.0.1:4010"
+db_path = "/var/lib/nxms/mailbox/nxms_mailbox.db"
+max_body_bytes = 16777216
+default_ttl_secs = 86400
+max_ttl_secs = 604800
+lease_secs = 60
+max_wait_ms = 20000
+cleanup_secs = 30
+checkpoint_secs = 300
+max_messages_per_inbox = 10000
+max_bytes_per_inbox = 67108864
+max_rows_global = 1000000
+rate_limit_ip_per_min = 300
+rate_limit_to_per_min = 600
+production_hardening = true
+
+push_token = "vault:/run/secrets/nxms/mailbox_push_token"
+admin_token = "vault:/run/secrets/nxms/mailbox_admin_token"
+
+[pull_tokens]
+buyer = "vault:/run/secrets/nxms/mailbox_pull_token_buyer"
+seller = "vault:/run/secrets/nxms/mailbox_pull_token_seller"
+arbiter = "vault:/run/secrets/nxms/mailbox_pull_token_arbiter"
+
+[ack_tokens]
+buyer = "vault:/run/secrets/nxms/mailbox_ack_token_buyer"
+seller = "vault:/run/secrets/nxms/mailbox_ack_token_seller"
+arbiter = "vault:/run/secrets/nxms/mailbox_ack_token_arbiter"

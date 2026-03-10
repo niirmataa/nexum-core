@@ -3,12 +3,8 @@ NXMS_GROUP="nxms"
 NXMS_WORKDIR="/opt/nxms"
 
 NXMS_MAILBOX_BIN="/opt/nxms/bin/nxms-mailbox"
-
-# TU WKŁADASZ PRAWDZIWE FLAGI binarki mailboxa
-NXMS_MAILBOX_ARGS="
-  --db-path /var/lib/nxms/mailbox.db
-  --listen 127.0.0.1:8080
-"
+NXMS_MAILBOX_STATE_DIR="/var/lib/nxms/mailbox"
+NXMS_MAILBOX_CONFIG="/etc/nxms/mailbox.toml"
 
 NXMS_MAILBOX_STDOUT_LOG="/var/log/nxms/mailbox.log"
 NXMS_MAILBOX_STDERR_LOG="/var/log/nxms/mailbox.err"

@@ -1,30 +1,76 @@
 #!/sbin/openrc-run
 
 name="nxms-signer"
-description="NXMS signer node"
+description="NXMS signer node (Tor-only mailbox consumer)"
 
 command="${NXMS_SIGNER_BIN:-/opt/nxms/bin/nxms-signer}"
+pidfile="${NXMS_SIGNER_PIDFILE:-/run/${RC_SVCNAME}.pid}"
+command_args="run --config ${NXMS_SIGNER_CONFIG}"
 command_background="yes"
-pidfile="/run/${RC_SVCNAME}.pid"
 output_log="${NXMS_SIGNER_STDOUT_LOG:-/var/log/nxms/signer.log}"
 error_log="${NXMS_SIGNER_STDERR_LOG:-/var/log/nxms/signer.err}"
 
 : "${NXMS_USER:=nxms}"
 : "${NXMS_GROUP:=nxms}"
 : "${NXMS_WORKDIR:=/opt/nxms}"
-: "${NXMS_SIGNER_ARGS:=}"
+: "${NXMS_SIGNER_STATE_DIR:=/var/lib/nxms/signer}"
+: "${NXMS_SIGNER_CONFIG:=/etc/nxms/signer.toml}"
 : "${RUST_LOG:=info}"
 
 depend() {
-    need net
-    use tor
-    after firewall nxms-mailbox
+    need localmount tor
+    use net
+    after firewall
+}
+
+bool_is_true() {
+    case "$1" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+validate_orchestrator_bridge() {
+    if ! bool_is_true "${NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE:-false}" \
+        && ! bool_is_true "${NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE_REQUIRED:-false}" \
+        && ! bool_is_true "${NXMS_SIGNER_ORCH_QUORUM_PROOF_VERIFY:-false}"; then
+        return 0
+    fi
+
+    if [ -z "${NXMS_ORCH_BIN:-}" ] || [ ! -x "${NXMS_ORCH_BIN}" ]; then
+        eerror "NXMS_ORCH_BIN must point to an executable when orchestrator bridge is enabled"
+        return 1
+    fi
+    if [ -z "${NXMS_ORCH_DB_PATH:-}" ]; then
+        eerror "NXMS_ORCH_DB_PATH must be set when orchestrator bridge is enabled"
+        return 1
+    fi
+    if [ -z "${NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF:-}" ]; then
+        eerror "NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF must be set when orchestrator bridge is enabled"
+        return 1
+    fi
+}
+
+export_runtime_env() {
+    export RUST_LOG
+    export NXMS_ORCH_BIN
+    export NXMS_ORCH_DB_PATH
+    export NXMS_SIGNER_ORCH_TIMEOUT_SECS
+    export NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE
+    export NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE_REQUIRED
+    export NXMS_SIGNER_ORCH_QUORUM_PROOF_VERIFY
+    export NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF
+    validate_orchestrator_bridge || return 1
 }
 
 start_pre() {
-    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /var/lib/nxms
+    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 "${NXMS_SIGNER_STATE_DIR}"
     checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /var/log/nxms
-    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /run
+    checkpath --directory --owner root:root --mode 0755 /run
 
     checkpath --file --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0640 "${output_log}"
     checkpath --file --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0640 "${error_log}"
@@ -33,6 +79,12 @@ start_pre() {
         eerror "binary not executable: ${command}"
         return 1
     fi
+    if [ ! -r "${NXMS_SIGNER_CONFIG}" ]; then
+        eerror "config not readable: ${NXMS_SIGNER_CONFIG}"
+        return 1
+    fi
+
+    export_runtime_env || return 1
 }
 
 start() {
@@ -46,8 +98,7 @@ start() {
         --user "${NXMS_USER}:${NXMS_GROUP}" \
         --stdout "${output_log}" \
         --stderr "${error_log}" \
-        --env RUST_LOG="${RUST_LOG}" \
-        --exec "${command}" -- ${NXMS_SIGNER_ARGS}
+        --exec "${command}" -- ${command_args}
     eend $?
 }
 

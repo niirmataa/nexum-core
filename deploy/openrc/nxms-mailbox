@@ -1,35 +1,52 @@
 #!/sbin/openrc-run
 
 name="nxms-mailbox"
-description="NXMS mailbox relay"
+description="NXMS mailbox relay (loopback adapter behind Tor hidden service)"
 
 command="${NXMS_MAILBOX_BIN:-/opt/nxms/bin/nxms-mailbox}"
+command_args="serve --config ${NXMS_MAILBOX_CONFIG}"
 command_background="yes"
-pidfile="/run/${RC_SVCNAME}.pid"
+pidfile="${NXMS_MAILBOX_PIDFILE:-/run/${RC_SVCNAME}.pid}"
 output_log="${NXMS_MAILBOX_STDOUT_LOG:-/var/log/nxms/mailbox.log}"
 error_log="${NXMS_MAILBOX_STDERR_LOG:-/var/log/nxms/mailbox.err}"
 
 : "${NXMS_USER:=nxms}"
 : "${NXMS_GROUP:=nxms}"
 : "${NXMS_WORKDIR:=/opt/nxms}"
-: "${NXMS_MAILBOX_ARGS:=}"
+: "${NXMS_MAILBOX_STATE_DIR:=/var/lib/nxms/mailbox}"
+: "${NXMS_MAILBOX_CONFIG:=/etc/nxms/mailbox.toml}"
 
 depend() {
-    need net
-    use tor
+    need localmount
+    use net tor
     after firewall
 }
 
+is_loopback_bind() {
+    case "$1" in
+        127.0.0.1:*|localhost:*|\[::1\]:*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 start_pre() {
-    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /var/lib/nxms
+    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 "${NXMS_MAILBOX_STATE_DIR}"
     checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /var/log/nxms
-    checkpath --directory --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0750 /run
+    checkpath --directory --owner root:root --mode 0755 /run
 
     checkpath --file --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0640 "${output_log}"
     checkpath --file --owner "${NXMS_USER}:${NXMS_GROUP}" --mode 0640 "${error_log}"
 
     if [ ! -x "${command}" ]; then
         eerror "binary not executable: ${command}"
+        return 1
+    fi
+    if [ ! -r "${NXMS_MAILBOX_CONFIG}" ]; then
+        eerror "config not readable: ${NXMS_MAILBOX_CONFIG}"
         return 1
     fi
 }
@@ -45,7 +62,7 @@ start() {
         --user "${NXMS_USER}:${NXMS_GROUP}" \
         --stdout "${output_log}" \
         --stderr "${error_log}" \
-        --exec "${command}" -- ${NXMS_MAILBOX_ARGS}
+        --exec "${command}" -- ${command_args}
     eend $?
 }
 

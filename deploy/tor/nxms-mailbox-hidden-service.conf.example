@@ -1,0 +1,18 @@
+# NXMS mailbox hidden service.
+# Install as a dedicated torrc.d fragment, for example:
+#   /etc/tor/torrc.d/nxms-mailbox.conf
+#
+# The mailbox process itself must stay bound only to:
+#   127.0.0.1:4010
+
+HiddenServiceDir /var/lib/tor/nxms-mailbox
+HiddenServiceVersion 3
+HiddenServicePort 80 127.0.0.1:4010
+
+# Recommended hardening:
+# - keep HiddenServiceDir owned by tor:tor with mode 0700
+# - use a dedicated hidden service only for nxms-mailbox
+# - prefer v3 client authorization if the deployment model allows pre-shared clients
+#
+# Example:
+# HiddenServiceAuthorizeClient stealth signer-a,signer-b
