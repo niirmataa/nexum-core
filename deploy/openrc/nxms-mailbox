@@ -22,6 +22,11 @@ depend() {
     after firewall
 }
 
+service_can_read() {
+    local path="$1"
+    su -s /bin/sh -c "test -r \"$path\"" "${NXMS_USER}"
+}
+
 is_loopback_bind() {
     case "$1" in
         127.0.0.1:*|localhost:*|\[::1\]:*)
@@ -47,6 +52,10 @@ start_pre() {
     fi
     if [ ! -r "${NXMS_MAILBOX_CONFIG}" ]; then
         eerror "config not readable: ${NXMS_MAILBOX_CONFIG}"
+        return 1
+    fi
+    if ! service_can_read "${NXMS_MAILBOX_CONFIG}"; then
+        eerror "config not readable by ${NXMS_USER}: ${NXMS_MAILBOX_CONFIG}"
         return 1
     fi
 }

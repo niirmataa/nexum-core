@@ -32,9 +32,11 @@ Scope: Alpine/OpenRC deploy baseline for the canonical `nxms-transport -> nxms-m
   OpenRC points only to `/etc/nxms/mailbox.toml`.
   Mailbox bearer tokens live in mailbox TOML as `vault:` / `file:` / `env:` refs.
   Production baseline is `vault:` refs backed by `/run/secrets/nxms/...`.
+  Ownership baseline: `/etc/nxms/mailbox.toml` as `root:nxms 0640`, mailbox secret files as `nxms:nxms 0600`, secret directory as `root:nxms 0750`.
 - Signer:
   main secrets stay in signer TOML via `vault:` / `file:` refs.
   Optional orchestrator bridge token, if enabled, is passed as `NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF=vault:/...`.
+  Ownership baseline: `/etc/nxms/signer.toml` as `root:nxms 0640`; signer secret files referenced via `vault:` must be `nxms:nxms 0600`.
 - Do not place mailbox bearer values or bridge token values directly in `.confd`.
 - Do not pass secrets in `start-stop-daemon` argv.
 

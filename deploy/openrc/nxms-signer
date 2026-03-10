@@ -23,6 +23,11 @@ depend() {
     after firewall
 }
 
+service_can_read() {
+    local path="$1"
+    su -s /bin/sh -c "test -r \"$path\"" "${NXMS_USER}"
+}
+
 bool_is_true() {
     case "$1" in
         1|true|TRUE|yes|YES|on|ON)
@@ -81,6 +86,10 @@ start_pre() {
     fi
     if [ ! -r "${NXMS_SIGNER_CONFIG}" ]; then
         eerror "config not readable: ${NXMS_SIGNER_CONFIG}"
+        return 1
+    fi
+    if ! service_can_read "${NXMS_SIGNER_CONFIG}"; then
+        eerror "config not readable by ${NXMS_USER}: ${NXMS_SIGNER_CONFIG}"
         return 1
     fi
 

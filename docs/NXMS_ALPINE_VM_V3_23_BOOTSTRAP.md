@@ -207,7 +207,8 @@ doas chown -R nxms:nxms /var/lib/nxms
 doas chown -R nxms:nxms /var/log/nxms
 doas chmod 0750 /var/lib/nxms /var/lib/nxms/mailbox /var/lib/nxms/signer /var/lib/nxms/orchestrator
 doas chmod 0750 /var/log/nxms
-doas chmod 0700 /run/secrets/nxms
+doas chown root:nxms /run/secrets/nxms
+doas chmod 0750 /run/secrets/nxms
 ```
 
 Install binaries:
@@ -235,19 +236,20 @@ Install the repo baseline:
 
 ```bash
 doas install -m 0640 docs/NXMS_MAILBOX_CONFIG.example.toml /etc/nxms/mailbox.toml
+doas chown root:nxms /etc/nxms/mailbox.toml
 ```
 
 Create real mailbox secrets:
 
 ```bash
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_push_token'
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_admin_token'
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_pull_token_buyer'
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_pull_token_seller'
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_pull_token_arbiter'
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_ack_token_buyer'
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_ack_token_seller'
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_ack_token_arbiter'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_push_token && chown nxms:nxms /run/secrets/nxms/mailbox_push_token'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_admin_token && chown nxms:nxms /run/secrets/nxms/mailbox_admin_token'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_pull_token_buyer && chown nxms:nxms /run/secrets/nxms/mailbox_pull_token_buyer'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_pull_token_seller && chown nxms:nxms /run/secrets/nxms/mailbox_pull_token_seller'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_pull_token_arbiter && chown nxms:nxms /run/secrets/nxms/mailbox_pull_token_arbiter'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_ack_token_buyer && chown nxms:nxms /run/secrets/nxms/mailbox_ack_token_buyer'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_ack_token_seller && chown nxms:nxms /run/secrets/nxms/mailbox_ack_token_seller'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/mailbox_ack_token_arbiter && chown nxms:nxms /run/secrets/nxms/mailbox_ack_token_arbiter'
 ```
 
 Verify:
@@ -255,6 +257,11 @@ Verify:
 ```bash
 doas ls -l /run/secrets/nxms
 ```
+
+Expected ownership/modes:
+- `/etc/nxms/mailbox.toml` -> `root:nxms 0640`
+- `/run/secrets/nxms` -> `root:nxms 0750`
+- `/run/secrets/nxms/mailbox_*` -> `nxms:nxms 0600`
 
 ## 10. Tor Hidden Service
 
@@ -309,6 +316,7 @@ Install the example:
 
 ```bash
 doas install -m 0640 docs/NXMS_SIGNER_CONFIG.example.toml /etc/nxms/signer.toml
+doas chown root:nxms /etc/nxms/signer.toml
 ```
 
 Then edit `/etc/nxms/signer.toml` and set real values:
@@ -323,11 +331,15 @@ Then edit `/etc/nxms/signer.toml` and set real values:
 Create signer secrets referenced by TOML:
 
 ```bash
-doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/worker_service_token'
-doas sh -c 'umask 077 && cp /run/secrets/nxms/mailbox_push_token /run/secrets/nxms/mailbox_push_token_signer'
-doas sh -c 'umask 077 && cp /run/secrets/nxms/mailbox_pull_token_arbiter /run/secrets/nxms/mailbox_pull_token'
-doas sh -c 'umask 077 && cp /run/secrets/nxms/mailbox_ack_token_arbiter /run/secrets/nxms/mailbox_ack_token'
+doas sh -c 'umask 077 && openssl rand -hex 32 > /run/secrets/nxms/worker_service_token && chown nxms:nxms /run/secrets/nxms/worker_service_token'
+doas sh -c 'umask 077 && cp /run/secrets/nxms/mailbox_push_token /run/secrets/nxms/mailbox_push_token_signer && chown nxms:nxms /run/secrets/nxms/mailbox_push_token_signer'
+doas sh -c 'umask 077 && cp /run/secrets/nxms/mailbox_pull_token_arbiter /run/secrets/nxms/mailbox_pull_token && chown nxms:nxms /run/secrets/nxms/mailbox_pull_token'
+doas sh -c 'umask 077 && cp /run/secrets/nxms/mailbox_ack_token_arbiter /run/secrets/nxms/mailbox_ack_token && chown nxms:nxms /run/secrets/nxms/mailbox_ack_token'
 ```
+
+Expected ownership/modes:
+- `/etc/nxms/signer.toml` -> `root:nxms 0640`
+- signer `vault:` files under `/run/secrets/nxms` -> `nxms:nxms 0600`
 
 Important:
 - signer will not fully validate `sign/submit` paths without real `peers.json`, `keys.json`, action-token pubkey and local `monero-wallet-rpc`
