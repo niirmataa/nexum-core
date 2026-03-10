@@ -33,6 +33,7 @@ dist/
 *.so
 *.dylib
 *.dll
+.git-archive/
 
 # Runtime / logs / sockets / pids
 *.log
