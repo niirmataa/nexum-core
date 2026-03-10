@@ -16,6 +16,8 @@ Scope: canonical Monero runtime prerequisite for `nxms-signer run` on Alpine/Ope
 - `wallet-rpc` must stay loopback-only.
 - `monerod` should use Tor for network path.
 - This Monero layer is a prerequisite for signer startup and all later `sign/submit` runtime gates.
+- On Alpine/musl, do not assume the verified upstream `linux-x64` tarball is directly runnable.
+  Treat it as provenance input unless the runtime ABI is proven compatible.
 
 ## Why This Is P0
 `nxms-signer` does real startup work in `SignerAgent::from_config()`:
@@ -104,6 +106,15 @@ So a signer host without real `monerod` and `wallet-rpc` is not a truthful runti
    - `/var/lib/monero/stagenet`
    - `/var/lib/monero/wallets`
    - `/var/log/monero`
+
+## Alpine ABI Reality
+- The upstream Monero `linux-x64` tarball is glibc-linked.
+- A real Alpine/musl runtime may fail with:
+  - `No such file or directory` from `start-stop-daemon`
+  - missing interpreter `/lib64/ld-linux-x86-64.so.2`
+  - relocation failures for glibc symbols
+- If that happens, the OpenRC unit is not the bug.
+- The correct fix is a musl-compatible Monero build for Alpine, preferably built from the intended Monero source tag.
 
 ## What Must Exist Before Signer Start
 - host crypto baseline green:

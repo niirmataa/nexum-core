@@ -130,6 +130,15 @@ doas install -m 0755 "${MONERO_DIR}/monero-wallet-rpc" /opt/monero/0.18.4.5/mone
 doas ln -sfn /opt/monero/0.18.4.5 /opt/monero/current
 ```
 
+Important Alpine note:
+- the verified upstream `linux-x64` Monero tarball is a glibc-linked GNU/Linux build.
+- on Alpine/musl it is useful for provenance verification, but it is not a trustworthy direct runtime artifact by itself.
+- if `/opt/monero/current/monerod` fails with `No such file or directory` and `ld-linux-x86-64.so.2` relocation errors, do not try to paper over it in OpenRC.
+- the correct Alpine path is:
+  - build Monero from source on Alpine/musl for the pinned version you intend to run, or
+  - explicitly accept an Alpine-packaged Monero build if version drift is acceptable for that stage.
+- for the canonical NXMS Alpine runtime baseline, prefer a source build from the intended Monero tag over glibc compatibility shims.
+
 ## 4. Repo Checkout
 
 ```bash
