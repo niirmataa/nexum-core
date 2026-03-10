@@ -246,14 +246,14 @@ async fn spawn_real_mailbox_server(label: &str) -> (String, PathBuf) {
         db,
         MailboxApiConfig {
             push_token: Some("push-token-123456".to_string()),
-            pull_tokens: std::collections::HashMap::from([(
-                "peer1".to_string(),
-                "pull-token-123456".to_string(),
-            )]),
-            ack_tokens: std::collections::HashMap::from([(
-                "peer1".to_string(),
-                "ack-token-123456".to_string(),
-            )]),
+            pull_tokens: std::collections::HashMap::from([
+                ("local".to_string(), "pull-token-123456".to_string()),
+                ("peer1".to_string(), "peer1-pull-token-123456".to_string()),
+            ]),
+            ack_tokens: std::collections::HashMap::from([
+                ("local".to_string(), "ack-token-123456".to_string()),
+                ("peer1".to_string(), "peer1-ack-token-123456".to_string()),
+            ]),
             admin_token: Some("admin-token-123456".to_string()),
             max_body_bytes: 1024 * 1024,
             default_ttl_secs: 60,
@@ -2606,8 +2606,8 @@ async fn signer_delivers_approved_response_to_real_mailbox_app() {
 
     let mailbox_client = MailboxClient::builder(&mailbox_url)
         .expect("mailbox builder")
-        .pull_token("pull-token-123456")
-        .ack_token("ack-token-123456")
+        .pull_token("peer1-pull-token-123456")
+        .ack_token("peer1-ack-token-123456")
         .admin_token("admin-token-123456")
         .build()
         .expect("mailbox client");
@@ -2629,6 +2629,117 @@ async fn signer_delivers_approved_response_to_real_mailbox_app() {
         .await
         .expect("ack real mailbox response");
     let stats = mailbox_client.admin_stats().await.expect("admin stats");
+    assert_eq!(stats.total_rows, 0);
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&signer_db_path);
+    remove_file_quiet(&mailbox_db_path);
+}
+
+#[tokio::test]
+async fn transport_mailbox_signer_smoke_flow_uses_real_mailbox_app() {
+    let (mailbox_url, mailbox_db_path) = spawn_real_mailbox_server("transport_signer_smoke").await;
+    let wallet_state = Arc::new(WalletMockState::default());
+    let wallet_url = spawn_server(
+        Router::new()
+            .route("/json_rpc", post(wallet_rpc_handler))
+            .with_state(wallet_state.clone()),
+    )
+    .await;
+
+    let local_keys = Keys::generate().expect("local keys");
+    let peer_keys = Keys::generate().expect("peer keys");
+    let signer_db_path = unique_db_path("transport_signer_smoke");
+    let mut agent = make_agent(
+        mailbox_url.clone(),
+        wallet_url,
+        signer_db_path.clone(),
+        clone_keys(&local_keys),
+        clone_keys(&peer_keys),
+    )
+    .await;
+    let fixture = install_action_token_verifier(&mut agent, true, "transport-signer-smoke");
+
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&agent.db, escrow_id_hex).await;
+    let snapshot_hash = canonical_hash_hex(&snapshot).expect("snapshot hash");
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+
+    let ingress_client = MailboxClient::builder(&mailbox_url)
+        .expect("ingress builder")
+        .push_token("push-token-123456")
+        .build()
+        .expect("ingress client");
+    let req_env = build_tx_sign_req_envelope(
+        &local_keys,
+        &peer_keys,
+        escrow_id_hex,
+        &snapshot_hash,
+        1,
+    )
+    .await;
+    ingress_client
+        .push(&req_env, Some(60))
+        .await
+        .expect("push inbound envelope");
+
+    let pulled = agent.mailbox_pull_with_retry().await.expect("signer pull");
+    assert_eq!(pulled.messages.len(), 1);
+    let receipt = pulled.messages[0].receipt.clone();
+    agent
+        .process_envelope(pulled.messages[0].envelope.clone())
+        .await
+        .expect("process inbound envelope");
+    agent
+        .mailbox_ack_with_retry(&receipt)
+        .await
+        .expect("ack inbound receipt");
+
+    let pending = agent.db.list_pending().await.expect("list pending");
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, "pending");
+
+    let token = build_sign_action_token(
+        &agent,
+        &fixture,
+        escrow_id_hex,
+        &pending[0].txset_hash_hex,
+        &snapshot_hash_for_token,
+        "jti-transport-signer-smoke",
+    );
+    agent
+        .approve_pending(pending[0].id, Some(&token))
+        .await
+        .expect("approve pending");
+
+    let peer_client = MailboxClient::builder(&mailbox_url)
+        .expect("peer builder")
+        .pull_token("peer1-pull-token-123456")
+        .ack_token("peer1-ack-token-123456")
+        .admin_token("admin-token-123456")
+        .build()
+        .expect("peer client");
+    let peer_pulled = peer_client
+        .pull("peer1", Some(1), Some(0))
+        .await
+        .expect("pull outbound envelope");
+    assert_eq!(peer_pulled.messages.len(), 1);
+    let body = decode_push_body(
+        &serde_json::json!({"envelope": peer_pulled.messages[0].envelope}),
+        &local_keys,
+        &peer_keys,
+    );
+    let EscrowBody::TxSignResp(resp) = body else {
+        panic!("expected TxSignResp body");
+    };
+    assert!(resp.approved);
+    assert_eq!(resp.signed_tx_data_hex.as_deref(), Some("aa11"));
+
+    peer_client
+        .ack(&peer_pulled.messages[0].receipt)
+        .await
+        .expect("ack outbound receipt");
+    let stats = peer_client.admin_stats().await.expect("admin stats");
     assert_eq!(stats.total_rows, 0);
 
     remove_file_quiet(&fixture.key_path);

@@ -49,6 +49,8 @@ Scope: `nxms-signer` truth-guarding tests for the canonical `nxms-transport -> n
   `agent::tests::reject_pending_retry_from_rejected_sending_resends_with_staged_seq`
 - `signer <-> mailbox local adapter boundary`
   `agent::tests::signer_delivers_approved_response_to_real_mailbox_app`
+- `nxms-transport -> mailbox -> signer -> mailbox smoke`
+  `agent::tests::transport_mailbox_signer_smoke_flow_uses_real_mailbox_app`
 
 ## Real Gate For This Stage
 Run at minimum:
@@ -60,6 +62,7 @@ cargo test -p nxms-signer dead_letter_truth_uses_failed_dead_letter_status_and_d
 cargo test -p nxms-signer approve_pending_retry_from_approved_sending_recovers_after_restart -- --nocapture
 cargo test -p nxms-signer init_migrates_pending_status_constraint_and_normalizes_approved -- --nocapture
 cargo test -p nxms-signer signer_delivers_approved_response_to_real_mailbox_app -- --nocapture
+cargo test -p nxms-signer transport_mailbox_signer_smoke_flow_uses_real_mailbox_app -- --nocapture
 ```
 
 Preferred full signer gate:
