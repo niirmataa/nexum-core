@@ -37,6 +37,7 @@ NXMS to auto-multisig escrow system z:
 
 - `deploy/`
 - `docs/`
+- `deploy/audit/` (repo-managed audit baseline profiles for WSL and VM)
 
 ---
 
@@ -122,6 +123,7 @@ Dodatkowe zasady:
 - wspólny język triady `nxms-guard / nxms-boss / nxms-integrity` jest opisany w `docs/NXMS_TRUST_TRIAD.md`.
 - model pojęciowy `nxms-integrity` jest opisany w `docs/NXMS_INTEGRITY_MODEL.md`.
 - host-role matrix jest utrzymywany w `docs/NXMS_HOST_ROLE_MATRIX.md` i jest domykany po pierwszych realnych uruchomieniach.
+- audyt środowiska developerskiego i runtime jest rozdzielony zgodnie z `docs/NXMS_AUDIT_BASELINE.md`.
 
 ---
 

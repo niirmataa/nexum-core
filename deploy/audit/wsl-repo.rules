@@ -1,0 +1,20 @@
+## NXMS WSL repo-centric audit profile
+##
+## Purpose:
+## - detect reads/writes of the working repo and append-only archive
+## - detect bundle access
+## - detect direct touches of shell trace files used by the operator
+##
+## This profile intentionally does not attempt full host auditing.
+
+-D
+-b 8192
+-f 1
+
+-w /home/nxms-server/nexum-core/.git -p rwa -k nxms-repo
+-w /home/nxms-server/nexum-core/.git-archive -p rwa -k nxms-archive
+-w /home/nxms-server/nexum-core/tools/nxms-archive-guard.sh -p rwxa -k nxms-archive
+-w /home/nxms-server/nexum-core/.git/logs -p rwa -k nxms-repo
+-w /home/nxms-server/.bash_history -p rwa -k nxms-shell-trace
+-w /home/nxms-server/.ash_history -p rwa -k nxms-shell-trace
+-w /mnt/hgfs/Documents/nexum-core.bundle -p rwa -k nxms-bundle

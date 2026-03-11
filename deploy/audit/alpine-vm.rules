@@ -1,0 +1,49 @@
+## NXMS Alpine VM host-centric audit profile
+##
+## Purpose:
+## - track execution on the runtime host
+## - track reads/writes of critical NXMS, Monero, Tor and operator files
+## - keep the rule set narrow enough to remain readable
+
+-D
+-b 8192
+-f 1
+
+## Execution tracing
+-a always,exit -F arch=b64 -S execve -k nxms-exec
+-a always,exit -F arch=b32 -S execve -k nxms-exec
+
+## Audit configuration and log custody
+-w /etc/audit/auditd.conf -p rwa -k nxms-audit-config
+-w /etc/audit/audit.rules -p rwa -k nxms-audit-config
+-w /root/nxms-audit -p rwa -k nxms-audit-log
+-w /root/nxms-audit/audit.log -p rwa -k nxms-audit-log
+
+## Operator and identity files
+-w /home/operator/.profile -p rwa -k nxms-shell-trace
+-w /home/operator/.bashrc -p rwa -k nxms-shell-trace
+-w /home/operator/.bash_history -p rwa -k nxms-shell-trace
+-w /home/operator/.ash_history -p rwa -k nxms-shell-trace
+-w /home/operator/.ssh -p rwa -k nxms-identity
+
+## Host identity and privilege surface
+-w /etc/passwd -p wa -k nxms-identity
+-w /etc/group -p wa -k nxms-identity
+-w /etc/shadow -p wa -k nxms-identity
+-w /etc/doas.conf -p rwa -k nxms-identity
+-w /etc/doas.d -p rwa -k nxms-identity
+
+## NXMS / Monero runtime config and init
+-w /etc/init.d/monerod-stagenet -p rwa -k nxms-runtime-init
+-w /etc/init.d/monero-wallet-rpc-stagenet -p rwa -k nxms-runtime-init
+-w /etc/conf.d/monerod-stagenet -p rwa -k nxms-runtime-init
+-w /etc/conf.d/monero-wallet-rpc-stagenet -p rwa -k nxms-runtime-init
+-w /etc/monero -p rwa -k nxms-monero
+-w /opt/monero/0.18.4.5-musl/monerod -p rxa -k nxms-runtime-bin
+-w /opt/monero/0.18.4.5-musl/monero-wallet-rpc -p rxa -k nxms-runtime-bin
+
+## Tor boundary
+-w /etc/tor/torrc -p rwa -k nxms-tor
+
+## Lock rules until reboot
+-e 2
