@@ -21,7 +21,7 @@ z możliwością ręcznej interwencji operatora tylko poza ścieżką krytyczną
 - `nxms-signer` jest node’em wykonawczym z lokalnymi kluczami
 - `nxms-escrow-orchestrator` prowadzi workflow end-to-end
 - `nxms-monero-core` zawiera logikę domenową Monero / multisig
-- `tools/nexum-cli` jest narzędziem **manualnym / operatorskim / recovery**
+- `tools/nexum-cli` jest narzędziem **manualnym user-auth / crypto**, a nie operatorskim UI/runtime surface
 - komunikacja między hostami ma iść **wyłącznie przez Tor**
 - system docelowo działa na **Alpine Linux**
 - legacy pathy, shadow mode i break-glass nie są częścią głównego flow

@@ -8,7 +8,7 @@ Canonical runtime path:
 - nxms-signer = signing/execution node
 - nxms-escrow-orchestrator = workflow control-plane
 - nxms-monero-core = Monero/multisig domain logic
-- tools/nexum-cli = manual/operator tooling only
+- tools/nexum-cli = manual user-auth/crypto tooling only; not operator UI, not runtime escrow surface
 
 ## Hard rules
 - Do not introduce a second parallel flow.

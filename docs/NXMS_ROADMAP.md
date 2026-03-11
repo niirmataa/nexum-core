@@ -11,7 +11,7 @@ Docelowe założenia:
 - `nxms-signer` jako node z kluczami i lokalną logiką wykonawczą
 - `nxms-escrow-orchestrator` jako automat i control-plane
 - `nxms-monero-core` jako rdzeń domenowy Monero / multisig
-- `tools/nexum-cli` jako narzędzie ręczne / operatorskie / recovery
+- `tools/nexum-cli` jako wąskie narzędzie ręczne user-auth / crypto
 - komunikacja między hostami tylko przez Tor
 - deployment docelowo na Alpine Linux
 - brak legacy direct flow w głównej ścieżce
@@ -73,9 +73,10 @@ Każdy moduł, plik albo feature ma mieć jeden z tagów:
 - [ ] Przenieść orchestrator bez `http_flow.rs`.
 - [ ] Zostawić tylko automat workflow.
 
-## Etap 6 — przeniesienie `nexum-cli`
-- [ ] Przenieść do `tools/nexum-cli/`.
-- [ ] Zostawić jako MANUAL / recovery / operator tooling.
+## Etap 6 — zawężenie `nexum-cli`
+- [ ] Utrzymać `tools/nexum-cli/` jako osobne narzędzie MANUAL dla auth/crypto primitives.
+- [ ] Usunąć z docelowego kontraktu `nexum-cli` rolę operator tooling, escrow surface i UI helpera.
+- [ ] Wydzielić osobno operator emergency console i osobno guard-admin tooling.
 
 ## Etap 7 — cięcie legacy
 - [ ] Usunąć stare HTTP pathy z runtime core.

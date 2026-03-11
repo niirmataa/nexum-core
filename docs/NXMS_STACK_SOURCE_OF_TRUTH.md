@@ -141,9 +141,20 @@ Dodatkowe zasady:
 
 `tools/nexum-cli`:
 - jest narzędziem ręcznym,
-- służy operatorowi,
-- służy do recovery, auth, registration, prekeys, DM i diagnostyki,
+- docelowo służy tylko do auth / registration / challenge-response / sign / verify / key generation primitives,
+- nie jest legalną ścieżką user escrow,
+- nie jest legalną ścieżką operator runtime control,
+- nie jest narzędziem administrowania `auth guard`,
 - nie należy do krytycznej ścieżki runtime automatu.
+
+Status docelowy:
+- user escrow flow idzie wyłącznie przez dedykowaną warstwę `.onion hidden service`,
+- operator manual console istnieje osobno i tylko jako ścieżka awaryjna,
+- guard/admin tooling istnieje osobno i nie miesza się z user CLI.
+
+Status bieżący repo:
+- obecny kod `tools/nexum-cli` nadal zawiera legacy/manual surface wykraczający poza target scope,
+- dopóki ten drift nie zostanie usunięty z implementacji, obowiązującym kontraktem pozostaje ten dokument, a nie historyczny zakres komend.
 
 System ma działać bez wymogu użycia `nexum-cli`.
 

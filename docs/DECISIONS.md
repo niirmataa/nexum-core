@@ -84,3 +84,13 @@
 - Decision: operator access to runtime core must flow only through `nxms-auth-guard`; runtime roles are hermetic executors, not direct operator control points.
 - Reason: host-level access or a compromised operator account must not become a quiet bypass of the system trust model.
 - Consequence: maintenance requires guard-approved artifacts, guard runtime becomes tamper-reactive, and offline paper recovery material is allowed only as part of a resurrection quorum, never as a single master key.
+
+## 2026-03-11: No Operator UI; Escrow User Path Lives On Dedicated Onion Surface
+- Decision: do not build or preserve a general operator UI as part of the target architecture.
+- Reason: operator UI widens the attack surface, leaks too much runtime state, and creates pressure to normalize convenience bypasses.
+- Consequence: user escrow flow must live only on a dedicated `.onion` hidden-service surface, while operator/manual actions stay in separate emergency tooling and never become a normal UI/runtime control plane.
+
+## 2026-03-11: Nexum-CLI Target Scope Reduced To Auth And Crypto Primitives
+- Decision: `tools/nexum-cli` is not the target client for escrow, operator runtime control, or guard administration; its target scope is limited to auth/registration/challenge-response/sign/verify/key generation primitives.
+- Reason: user-facing tooling must not carry operator or guard capabilities, and the system must avoid one large binary that mixes user, operator, and trust-root roles.
+- Consequence: current broader `nexum-cli` code is treated as transitional legacy surface to be narrowed later; source-of-truth docs should no longer describe it as operator/recovery UI tooling.
