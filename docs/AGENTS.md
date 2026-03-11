@@ -24,6 +24,36 @@ Every change must be classified as one of:
 - OPS
 - MANUAL
 
+## Documentation classes
+
+Only two documentation classes are allowed:
+
+### PRIMARY
+
+Files kept directly in `docs/` are the only primary docs.
+They define the current model and current work direction.
+
+Current primary docs:
+- `docs/NXMS_STACK_SOURCE_OF_TRUTH.md`
+- `docs/NXMS_ROADMAP.md`
+- `docs/NXMS_AUTH_GUARD_WORKING_NOTES.md`
+
+Rules:
+- `NXMS_STACK_SOURCE_OF_TRUTH.md` is the only architectural source of truth.
+- `NXMS_ROADMAP.md` is the only active roadmap/checklist.
+- `NXMS_AUTH_GUARD_WORKING_NOTES.md` is the only working notes file for ongoing guard/security thinking.
+
+### REFERENCE
+
+Files in `docs/reference/` are supporting, historical, deploy, runbook, test-matrix
+or exploratory material.
+
+Rules:
+- reference docs must not redefine architecture,
+- reference docs must not override quorum, roles or trust model,
+- if a reference doc conflicts with `NXMS_STACK_SOURCE_OF_TRUTH.md`, the source-of-truth wins,
+- new architectural truth must not be introduced in `docs/reference/`.
+
 ## Required outputs for code changes
 When editing code, always provide:
 1. what changed

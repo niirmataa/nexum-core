@@ -4,6 +4,11 @@ To jest główny dokument określający, **co jest prawdziwą architekturą syst
 
 Jeśli kod, dokumentacja albo stare notatki są z tym dokumentem sprzeczne, wygrywa ten plik.
 
+Ten plik ma pozostac krotki i nadrzedny.
+Nie sluzy do burzy mozgow.
+Nie sluzy do trzymania wariantow.
+Ma opisywac tylko aktualnie przyjety model.
+
 ---
 
 ## 1. Cel systemu
@@ -98,32 +103,34 @@ Orchestrator nie jest ostatecznym źródłem autoryzacji wejścia/wyjścia flow.
 `auth guards`:
 - są osobną rolą sieciową systemu,
 - są warunkiem wejścia i wyjścia krytycznego flow,
-- utrzymują quorum autoryzacyjne `2 z 5`,
+- utrzymują konstytucyjne quorum autoryzacyjne `2 z 2`,
 - są sercem autentykacji, rotacji kluczy i trust root warstwy `nxms-transport`,
 - trzymają główne klucze autoryzacyjne systemu oparte o `Falcon-1024-CT` i `FrodoKEM`,
 - wystawiają proofy/quorum decision artifacts weryfikowane przez inne role,
-- są jedyną warstwą zdolną do legalnej reaktywacji i odtworzenia systemu w nowej lokalizacji,
 - działają fail-closed: brak quorum guardów oznacza brak systemu.
 
 Konsekwencje:
-- bez ważnego quorum guardów `2 z 5` system nie ma prawa dopuścić krytycznej akcji,
+- bez ważnego quorum guardów `2 z 2` system nie ma prawa dopuścić krytycznej akcji,
 - bez `2` ważnych podpisów `Falcon-1024-CT` i poprawnego `KEM package` system nie ma prawa legalnie się aktywować ani przejść przez punkt krytyczny,
 - signer i orchestrator nie zastępują guardów lokalną decyzją,
 - orchestrator może prowadzić workflow i agregować stan/proofy, ale nie może samodzielnie zastąpić quorum guardów,
 - guardy są częścią rdzenia systemu, a nie dodatkową warstwą auth,
 - guardy są najbardziej chronioną rolą hostową w całym NXMS.
+- pojedynczy guard po utracie drugiej strony nie ma prawa reaktywować ani dalej prowadzić systemu; może co najwyżej publikować komunikat informacyjny o awarii.
+- operator nie jest częścią quorum konstytucyjnego; może dawać tylko witness operacyjny i sygnał dostępności.
+- dopuszczalny jest tylko bardzo wąski tryb awaryjnego domknięcia escrow już będących w toku, po którym system przechodzi do `END SYSTEM`.
 
 Dodatkowe zasady:
 - operator nie ma bezpośredniej ścieżki logicznej do runtime core poza warstwą guardów,
 - host runtime ma działać jak hermetyczny executor, nie miejsce ręcznego zarządzania trustem,
 - guard runtime jest tamper-reactive i ma przechodzić w `quarantine` przy próbie nieautoryzowanej manipulacji,
 - offline recovery material istnieje poza runtime i nie może być pojedynczym master key.
-- operacje krytyczne i maintenance są mapowane na warianty `GDA` zgodnie z `docs/NXMS_GUARD_DECISION_ARTIFACT_MODEL.md`.
+- operacje krytyczne i maintenance są mapowane na warianty `GDA` zgodnie z `docs/reference/NXMS_GUARD_DECISION_ARTIFACT_MODEL.md`.
 - abstrakcyjny model offline recovery quorum jest jawny architektonicznie, ale tajne szczegóły depozytu pozostają poza repo.
-- wspólny język triady `nxms-guard / nxms-boss / nxms-integrity` jest opisany w `docs/NXMS_TRUST_TRIAD.md`.
-- model pojęciowy `nxms-integrity` jest opisany w `docs/NXMS_INTEGRITY_MODEL.md`.
-- host-role matrix jest utrzymywany w `docs/NXMS_HOST_ROLE_MATRIX.md` i jest domykany po pierwszych realnych uruchomieniach.
-- audyt środowiska developerskiego i runtime jest rozdzielony zgodnie z `docs/NXMS_AUDIT_BASELINE.md`.
+- wspólny język triady `nxms-guard / nxms-boss / nxms-integrity` jest opisany w `docs/reference/NXMS_TRUST_TRIAD.md`.
+- model pojęciowy `nxms-integrity` jest opisany w `docs/reference/NXMS_INTEGRITY_MODEL.md`.
+- host-role matrix jest utrzymywany w `docs/reference/NXMS_HOST_ROLE_MATRIX.md` i jest domykany po pierwszych realnych uruchomieniach.
+- audyt środowiska developerskiego i runtime jest rozdzielony zgodnie z `docs/reference/NXMS_AUDIT_BASELINE.md`.
 
 ---
 
@@ -176,6 +183,17 @@ Doprecyzowanie granic:
 - role hostowe (`auth guard`, `mailbox`, `signer`, `orchestrator`, `monerod`) są docelowo rozdzielone na oddzielnych maszynach spiętych tylko przez Tor/onion.
 - `wallet-rpc` nie jest komunikacją między hostami; ma pozostać tylko local loopback boundary.
 
+Docelowy stały runtime core:
+- `1x AG-01`
+- `1x AG-02`
+- `1x orchestrator`
+- `1x mailbox`
+- `1x signer-a + monero-a`
+- `1x signer-b + monero-b`
+
+`operator-console` pozostaje oddzielnym, kontrolowanym środowiskiem użycia
+systemu i nie jest liczony jako część stałego konstytucyjnego runtime core.
+
 ---
 
 ## 10. Czego nie robimy
@@ -186,9 +204,21 @@ Nie utrzymujemy:
 - direct legacy sign/submit jako normalnego runtime,
 - shadow mode jako domyślnej drogi,
 - break-glass jako zwykłego mechanizmu pracy,
-- krytycznych decyzji bez quorum guardów `2 z 5`,
+- krytycznych decyzji bez quorum guardów `2 z 2`,
 - aktywacji, recovery albo trust-changing operations bez `2x Falcon + KEM package`,
 - clearnet exposure dla `monerod`, `wallet-rpc`, `signer`, `mailbox` albo guardów.
+
+---
+
+## 10a. Krótka Checklista
+
+- [ ] Konstytucyjne quorum opisane jako `2 z 2` i nigdzie indziej nie ma starego `2 z 5`
+- [ ] Operator nie jest częścią quorum
+- [ ] Operator ma tylko witness / dostępność / bounded scope
+- [ ] `mailbox` pozostaje jedynym relayem
+- [ ] `signer-a + monero-a` i `signer-b + monero-b` są traktowane jako dwa oddzielne execution hosty
+- [ ] Międzyhostowa komunikacja docelowo idzie tylko przez Tor/onion
+- [ ] Brak legalnej reaktywacji starego systemu po utracie pełnego quorum
 
 ---
 
