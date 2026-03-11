@@ -64,3 +64,23 @@
 - Decision: enforce explicit QUIC session lifecycle with proactive rekey and cooldown-limited forced resync on mismatch.
 - Reason: reduce stale-session failures and define deterministic recovery behavior required by audited production operation.
 - Consequence: runtime now rotates sessions before expiry and tracks per-peer rekey/resync counters; policy knobs are configurable (`rekey_before_expiry`, `resync_cooldown`).
+
+## 2026-03-10: Auth Guard Quorum Is Core, Not Optional Auth
+- Decision: treat `auth guard quorum 2 z 5` as a hard prerequisite for critical flow entry and exit.
+- Reason: signer/orchestrator alone must not be capable of replacing the system's main authorization trust root.
+- Consequence: guard proof verification becomes fail-closed architecture, not optional hardening.
+
+## 2026-03-10: Monero Runtime Must Be Fully Isolated From Clearnet
+- Decision: `monerod` is Tor-only and `wallet-rpc` is loopback-only.
+- Reason: exposing Monero runtime to clearnet violates the privacy and trust model of the system.
+- Consequence: runtime/deploy must fail closed on clearnet exposure, wrong bind, or missing Tor path.
+
+## 2026-03-11: Auth Guards Are The System Resurrection Root
+- Decision: treat `nxms-auth-guard` as the only legal trust root for system activation, resurrection, trust-set rotation, and critical-flow admission.
+- Reason: a patient adversary must not be able to grow a single host compromise into full-system control through orchestrator, signer, mailbox, or operational drift.
+- Consequence: existential operations now require `2` valid `Falcon-1024-CT` signatures plus a valid `FrodoKEM`-backed package; guard hosts become the highest-hardening role with explicit rotate/revoke/quarantine/resurrection policy.
+
+## 2026-03-11: No Direct Operator Path To Runtime Core
+- Decision: operator access to runtime core must flow only through `nxms-auth-guard`; runtime roles are hermetic executors, not direct operator control points.
+- Reason: host-level access or a compromised operator account must not become a quiet bypass of the system trust model.
+- Consequence: maintenance requires guard-approved artifacts, guard runtime becomes tamper-reactive, and offline paper recovery material is allowed only as part of a resurrection quorum, never as a single master key.

@@ -27,6 +27,7 @@ NXMS to auto-multisig escrow system z:
 - `nxms-monero-core`
 - `nxms-escrow-orchestrator`
 - `nxms-signer`
+- `nxms-auth-guard` (rola docelowa; quorum gate systemu)
 
 ### MANUAL
 
@@ -87,6 +88,40 @@ Signer nie jest zastępowany przez CLI ani przez mailbox.
 - przeprowadza ścieżkę od open escrow do close / fail.
 
 Orchestrator jest control-plane systemu.
+Orchestrator nie jest ostatecznym źródłem autoryzacji wejścia/wyjścia flow.
+
+---
+
+## 6a. Rola auth guardów
+
+`auth guards`:
+- są osobną rolą sieciową systemu,
+- są warunkiem wejścia i wyjścia krytycznego flow,
+- utrzymują quorum autoryzacyjne `2 z 5`,
+- są sercem autentykacji, rotacji kluczy i trust root warstwy `nxms-transport`,
+- trzymają główne klucze autoryzacyjne systemu oparte o `Falcon-1024-CT` i `FrodoKEM`,
+- wystawiają proofy/quorum decision artifacts weryfikowane przez inne role,
+- są jedyną warstwą zdolną do legalnej reaktywacji i odtworzenia systemu w nowej lokalizacji,
+- działają fail-closed: brak quorum guardów oznacza brak systemu.
+
+Konsekwencje:
+- bez ważnego quorum guardów `2 z 5` system nie ma prawa dopuścić krytycznej akcji,
+- bez `2` ważnych podpisów `Falcon-1024-CT` i poprawnego `KEM package` system nie ma prawa legalnie się aktywować ani przejść przez punkt krytyczny,
+- signer i orchestrator nie zastępują guardów lokalną decyzją,
+- orchestrator może prowadzić workflow i agregować stan/proofy, ale nie może samodzielnie zastąpić quorum guardów,
+- guardy są częścią rdzenia systemu, a nie dodatkową warstwą auth,
+- guardy są najbardziej chronioną rolą hostową w całym NXMS.
+
+Dodatkowe zasady:
+- operator nie ma bezpośredniej ścieżki logicznej do runtime core poza warstwą guardów,
+- host runtime ma działać jak hermetyczny executor, nie miejsce ręcznego zarządzania trustem,
+- guard runtime jest tamper-reactive i ma przechodzić w `quarantine` przy próbie nieautoryzowanej manipulacji,
+- offline recovery material istnieje poza runtime i nie może być pojedynczym master key.
+- operacje krytyczne i maintenance są mapowane na warianty `GDA` zgodnie z `docs/NXMS_GUARD_DECISION_ARTIFACT_MODEL.md`.
+- abstrakcyjny model offline recovery quorum jest jawny architektonicznie, ale tajne szczegóły depozytu pozostają poza repo.
+- wspólny język triady `nxms-guard / nxms-boss / nxms-integrity` jest opisany w `docs/NXMS_TRUST_TRIAD.md`.
+- model pojęciowy `nxms-integrity` jest opisany w `docs/NXMS_INTEGRITY_MODEL.md`.
+- host-role matrix jest utrzymywany w `docs/NXMS_HOST_ROLE_MATRIX.md` i jest domykany po pierwszych realnych uruchomieniach.
 
 ---
 
@@ -125,6 +160,8 @@ Doprecyzowanie granic:
 - `nxms-transport` jest jedyną warstwą end-to-end dla szyfrowania, podpisów, integralności i message binding.
 - lokalne HTTP/API procesów, np. `nxms-mailbox` na `127.0.0.1`, jest wyłącznie local process adapter boundary.
 - lokalne HTTP/API nie jest samodzielną warstwą bezpieczeństwa runtime i nie zastępuje `nxms-transport` ani Tora.
+- role hostowe (`auth guard`, `mailbox`, `signer`, `orchestrator`, `monerod`) są docelowo rozdzielone na oddzielnych maszynach spiętych tylko przez Tor/onion.
+- `wallet-rpc` nie jest komunikacją między hostami; ma pozostać tylko local loopback boundary.
 
 ---
 
@@ -135,7 +172,10 @@ Nie utrzymujemy:
 - HTTP-first orchestration jako głównej ścieżki,
 - direct legacy sign/submit jako normalnego runtime,
 - shadow mode jako domyślnej drogi,
-- break-glass jako zwykłego mechanizmu pracy.
+- break-glass jako zwykłego mechanizmu pracy,
+- krytycznych decyzji bez quorum guardów `2 z 5`,
+- aktywacji, recovery albo trust-changing operations bez `2x Falcon + KEM package`,
+- clearnet exposure dla `monerod`, `wallet-rpc`, `signer`, `mailbox` albo guardów.
 
 ---
 

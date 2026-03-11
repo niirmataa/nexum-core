@@ -30,6 +30,16 @@ Każdy moduł, plik albo feature ma mieć jeden z tagów:
 - Break-glass i shadow mode nie mogą być domyślną drogą działania.
 - Każda nowa rzecz musi mieć decyzję w docs i test.
 
+## Etap A — zamrożenie modelu guard quorum
+- [x] Zapisać `auth guard quorum 2 z 5` jako warunek istnienia systemu.
+- [x] Dodać `docs/NXMS_AUTH_GUARD_QUORUM_MODEL.md`.
+- [x] Dodać `docs/NXMS_AUTH_GUARD_SECURITY_MODEL.md`.
+- [x] Dodać `docs/NXMS_SYSTEM_P0_PAIN_POINTS.md`.
+- [ ] Zamrozić model zagrożeń `partial compromise over time` dla guardów.
+- [ ] Zamrozić klasy operacji `A/B/C` i invariants `2x Falcon + KEM package`.
+- [ ] Zamrozić lifecycle guard secrets: rotate / revoke / quarantine / resurrection.
+- [ ] Zamienić guard quorum na pełny invariant kodu i runtime gate.
+
 ## Etap 0 — zamrożenie starego świata
 - [ ] Zamknąć stare repo jako archiwum eksperymentu.
 - [ ] Utworzyć nowe repo robocze `nxms-core`.
@@ -76,6 +86,13 @@ Każdy moduł, plik albo feature ma mieć jeden z tagów:
 - [ ] Dodać OpenRC dla mailbox, signer, orchestrator.
 - [ ] Sprawdzić build na Alpine/musl.
 - [ ] Zrobić lokalne smoke testy na Alpine WSL.
+
+## Etap 8a — Monero/Tor-only runtime
+- [x] Zapisać Monero Tor-only jako prerequisite dla signera.
+- [x] Dodać baseline `monerod-stagenet` over Tor-only i `wallet-rpc` loopback-only.
+- [ ] Udowodnić natywny source build Monero na Alpine/musl.
+- [ ] Udowodnić `monerod-stagenet` over Tor-only na Alpine/OpenRC.
+- [ ] Udowodnić `wallet-rpc` loopback-only na Alpine/OpenRC.
 
 ## Etap 9 — testy E2E
 - [x] `tests/workspace_smoke.rs`
