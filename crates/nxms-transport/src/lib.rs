@@ -17,9 +17,12 @@ pub mod wire;
 pub use admission::{EscrowAdmissionArtifact, EscrowAdmissionSignature};
 #[cfg(feature = "crypto")]
 pub use bootstrap::{
-    export_host_identity, generate_local_host_vault, init_runtime_trust_bundle,
-    materialize_runtime_trust_for_local, now_ms, sign_runtime_trust_bundle,
-    verify_runtime_trust_bundle,
+    export_host_identity, export_host_identity_with_passphrase, generate_local_host_vault,
+    generate_local_host_vault_with_passphrase, init_runtime_trust_bundle,
+    materialize_runtime_trust_for_local, materialize_runtime_trust_for_local_with_passphrase,
+    now_ms, sign_runtime_trust_bundle, sign_runtime_trust_bundle_with_passphrase,
+    verify_runtime_trust_bundle, verify_runtime_trust_projection_for_local,
+    verify_runtime_trust_projection_for_local_with_passphrase,
 };
 pub use host_identity::HostIdentityBundle;
 #[cfg(feature = "crypto")]

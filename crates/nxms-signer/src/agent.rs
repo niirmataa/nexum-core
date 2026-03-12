@@ -69,7 +69,7 @@ impl SignerAgent {
         enforce_production_requirements(cfg.production_hardening)?;
         let peers = PeerBook::load(cfg.peers_path.clone())?;
         let keys = load_host_keys(&cfg.host_vault_dir, &cfg.host_vault_passphrase)?;
-        let runtime_trust_bundle = validate_runtime_trust_projection(&cfg, &keys, &peers)?;
+        let runtime_trust_bundle = validate_runtime_trust_projection(&cfg)?;
         let db = SignerDb::new(cfg.db_path.clone());
         db.init().await?;
 

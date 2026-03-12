@@ -240,7 +240,7 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
     let runtime_trust_bundle = input
         .runtime_trust_bundle_path
         .as_ref()
-        .map(RuntimeTrustBundle::load)
+        .map(RuntimeTrustBundle::load_verified)
         .transpose()?;
     let escrow_id_hex = normalize_hex_exact(&input.escrow_id_hex, 32, "escrow_id_hex")?;
     let txset_hash_hex = normalize_hex_exact(&input.txset_hash_hex, 64, "txset_hash_hex")?;

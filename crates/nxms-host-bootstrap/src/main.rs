@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand};
 use nxms_transport::bootstrap::{
     export_host_identity, generate_local_host_vault, init_runtime_trust_bundle,
     materialize_runtime_trust_for_local, now_ms, sign_runtime_trust_bundle,
-    verify_runtime_trust_bundle,
+    verify_runtime_trust_bundle, verify_runtime_trust_projection_for_local,
 };
 use nxms_transport::crypto::{suite_kem_id, suite_sig_id};
 use serde_json::to_string_pretty;
@@ -25,6 +25,7 @@ enum Command {
     SignBundle(SignBundleArgs),
     VerifyBundle(VerifyBundleArgs),
     MaterializeLocal(MaterializeLocalArgs),
+    CheckLocal(CheckLocalArgs),
 }
 
 #[derive(Debug, Args)]
@@ -135,6 +136,27 @@ struct MaterializeLocalArgs {
     action_token_public_key_pem_out: PathBuf,
 }
 
+#[derive(Debug, Args)]
+struct CheckLocalArgs {
+    #[arg(long)]
+    bundle: PathBuf,
+
+    #[arg(long)]
+    local_id: String,
+
+    #[arg(long)]
+    host_vault_dir: PathBuf,
+
+    #[arg(long)]
+    host_vault_passphrase_file: PathBuf,
+
+    #[arg(long)]
+    peers_path: PathBuf,
+
+    #[arg(long)]
+    action_token_public_key_pem_path: PathBuf,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -214,6 +236,25 @@ fn main() -> Result<()> {
                     "local_id": args.local_id,
                     "peers_path": args.peers_out,
                     "action_token_public_key_path": args.action_token_public_key_pem_out,
+                }))?
+            );
+        }
+        Command::CheckLocal(args) => {
+            let bundle = verify_runtime_trust_projection_for_local(
+                &args.bundle,
+                &args.local_id,
+                &args.host_vault_dir,
+                &args.host_vault_passphrase_file,
+                &args.peers_path,
+                &args.action_token_public_key_pem_path,
+            )?;
+            println!(
+                "{}",
+                to_string_pretty(&serde_json::json!({
+                    "trust_epoch": bundle.trust_epoch,
+                    "local_id": args.local_id,
+                    "peers_path": args.peers_path,
+                    "action_token_public_key_path": args.action_token_public_key_pem_path,
                 }))?
             );
         }

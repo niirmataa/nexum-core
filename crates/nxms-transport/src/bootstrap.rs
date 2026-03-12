@@ -1,6 +1,7 @@
 use crate::crypto::Keys;
 use crate::host_identity::HostIdentityBundle;
 use crate::host_vault::{self, HostVault, load_host_keys, vault_bin_path};
+use crate::peers::PeerBook;
 use crate::trust::{RuntimeActionTokenIssuer, RuntimeTrustBundle};
 use anyhow::{Context, Result, anyhow, bail};
 use std::io::Read;
@@ -22,13 +23,21 @@ pub fn generate_local_host_vault(
     host_vault_passphrase_file: &Path,
 ) -> Result<Keys> {
     let passphrase = read_owner_only_text(host_vault_passphrase_file, "host_vault_passphrase_file")?;
+    generate_local_host_vault_with_passphrase(local_id, host_vault_dir, passphrase.as_str())
+}
+
+pub fn generate_local_host_vault_with_passphrase(
+    local_id: &str,
+    host_vault_dir: &Path,
+    host_vault_passphrase: &str,
+) -> Result<Keys> {
     let vault_path = vault_bin_path(host_vault_dir);
     if vault_path.exists() {
         bail!("host vault already exists at {}", vault_path.display());
     }
-    HostVault::generate(host_vault_dir, passphrase.as_str(), local_id)
+    HostVault::generate(host_vault_dir, host_vault_passphrase, local_id)
         .with_context(|| format!("failed to generate host vault {}", vault_path.display()))?;
-    load_host_keys(host_vault_dir, passphrase.as_str())
+    load_host_keys(host_vault_dir, host_vault_passphrase)
         .with_context(|| format!("failed to load generated host vault {}", vault_path.display()))
 }
 
@@ -42,7 +51,27 @@ pub fn export_host_identity(
     out: &Path,
 ) -> Result<HostIdentityBundle> {
     let passphrase = read_owner_only_text(host_vault_passphrase_file, "host_vault_passphrase_file")?;
-    let keys = load_host_keys(host_vault_dir, passphrase.as_str()).with_context(|| {
+    export_host_identity_with_passphrase(
+        local_id,
+        role,
+        host,
+        port,
+        host_vault_dir,
+        passphrase.as_str(),
+        out,
+    )
+}
+
+pub fn export_host_identity_with_passphrase(
+    local_id: &str,
+    role: &str,
+    host: &str,
+    port: u16,
+    host_vault_dir: &Path,
+    host_vault_passphrase: &str,
+    out: &Path,
+) -> Result<HostIdentityBundle> {
+    let keys = load_host_keys(host_vault_dir, host_vault_passphrase).with_context(|| {
         format!(
             "failed to load host vault {}",
             host_vault::vault_bin_path(host_vault_dir).display()
@@ -94,22 +123,40 @@ pub fn sign_runtime_trust_bundle(
     created_at_unix_ms: u64,
 ) -> Result<RuntimeTrustBundle> {
     let passphrase = read_owner_only_text(host_vault_passphrase_file, "host_vault_passphrase_file")?;
-    let keys = load_host_keys(host_vault_dir, passphrase.as_str()).with_context(|| {
+    sign_runtime_trust_bundle_with_passphrase(
+        bundle_path,
+        signer_id,
+        signer_role,
+        host_vault_dir,
+        passphrase.as_str(),
+        out,
+        created_at_unix_ms,
+    )
+}
+
+pub fn sign_runtime_trust_bundle_with_passphrase(
+    bundle_path: &Path,
+    signer_id: &str,
+    signer_role: &str,
+    host_vault_dir: &Path,
+    host_vault_passphrase: &str,
+    out: &Path,
+    created_at_unix_ms: u64,
+) -> Result<RuntimeTrustBundle> {
+    let keys = load_host_keys(host_vault_dir, host_vault_passphrase).with_context(|| {
         format!(
             "failed to load host vault {}",
             host_vault::vault_bin_path(host_vault_dir).display()
         )
     })?;
-    let mut bundle = RuntimeTrustBundle::load(bundle_path)?;
+    let mut bundle = RuntimeTrustBundle::load_unverified(bundle_path)?;
     bundle.sign_with_local_keys(signer_id, signer_role, &keys, created_at_unix_ms)?;
     bundle.write_json(out)?;
     Ok(bundle)
 }
 
 pub fn verify_runtime_trust_bundle(bundle_path: &Path) -> Result<RuntimeTrustBundle> {
-    let bundle = RuntimeTrustBundle::load(bundle_path)?;
-    bundle.verify_guard_quorum()?;
-    Ok(bundle)
+    RuntimeTrustBundle::load_verified(bundle_path)
 }
 
 pub fn materialize_runtime_trust_for_local(
@@ -121,7 +168,44 @@ pub fn materialize_runtime_trust_for_local(
     action_token_public_key_pem_path: &Path,
 ) -> Result<RuntimeTrustBundle> {
     let passphrase = read_owner_only_text(host_vault_passphrase_file, "host_vault_passphrase_file")?;
-    let keys = load_host_keys(host_vault_dir, passphrase.as_str()).with_context(|| {
+    materialize_runtime_trust_for_local_with_passphrase(
+        bundle_path,
+        local_id,
+        host_vault_dir,
+        passphrase.as_str(),
+        peers_path,
+        action_token_public_key_pem_path,
+    )
+}
+
+pub fn verify_runtime_trust_projection_for_local(
+    bundle_path: &Path,
+    local_id: &str,
+    host_vault_dir: &Path,
+    host_vault_passphrase_file: &Path,
+    peers_path: &Path,
+    action_token_public_key_pem_path: &Path,
+) -> Result<RuntimeTrustBundle> {
+    let passphrase = read_owner_only_text(host_vault_passphrase_file, "host_vault_passphrase_file")?;
+    verify_runtime_trust_projection_for_local_with_passphrase(
+        bundle_path,
+        local_id,
+        host_vault_dir,
+        passphrase.as_str(),
+        peers_path,
+        action_token_public_key_pem_path,
+    )
+}
+
+pub fn materialize_runtime_trust_for_local_with_passphrase(
+    bundle_path: &Path,
+    local_id: &str,
+    host_vault_dir: &Path,
+    host_vault_passphrase: &str,
+    peers_path: &Path,
+    action_token_public_key_pem_path: &Path,
+) -> Result<RuntimeTrustBundle> {
+    let keys = load_host_keys(host_vault_dir, host_vault_passphrase).with_context(|| {
         format!(
             "failed to load host vault {}",
             host_vault::vault_bin_path(host_vault_dir).display()
@@ -130,6 +214,42 @@ pub fn materialize_runtime_trust_for_local(
     let bundle = verify_runtime_trust_bundle(bundle_path)?;
     bundle.validate_local_keys(local_id, &keys)?;
     bundle.materialize_for_local(local_id, peers_path, action_token_public_key_pem_path)?;
+    Ok(bundle)
+}
+
+pub fn verify_runtime_trust_projection_for_local_with_passphrase(
+    bundle_path: &Path,
+    local_id: &str,
+    host_vault_dir: &Path,
+    host_vault_passphrase: &str,
+    peers_path: &Path,
+    action_token_public_key_pem_path: &Path,
+) -> Result<RuntimeTrustBundle> {
+    let keys = load_host_keys(host_vault_dir, host_vault_passphrase).with_context(|| {
+        format!(
+            "failed to load host vault {}",
+            host_vault::vault_bin_path(host_vault_dir).display()
+        )
+    })?;
+    let bundle = verify_runtime_trust_bundle(bundle_path)?;
+    bundle.validate_local_keys(local_id, &keys)?;
+    let projected = bundle.peer_book_for(local_id)?;
+    let actual = PeerBook::load(peers_path).with_context(|| {
+        format!("failed to load peers projection {}", peers_path.display())
+    })?;
+    if projected != actual {
+        bail!(
+            "peers.json does not match runtime trust bundle projection for local_id '{}'",
+            local_id
+        );
+    }
+    let actual_pem = read_public_text(
+        action_token_public_key_pem_path,
+        "action_token_public_key_pem_path",
+    )?;
+    if normalize_text(&actual_pem) != normalize_text(bundle.action_token_public_key_pem()) {
+        bail!("action_token public key does not match runtime trust bundle projection");
+    }
     Ok(bundle)
 }
 
@@ -243,6 +363,10 @@ fn normalize_action_token_algorithm(value: &str) -> Result<String> {
         "EDDSA" | "ES256" => Ok(normalized),
         _ => bail!("action_token_algorithm must be EDDSA or ES256"),
     }
+}
+
+fn normalize_text(value: &str) -> &str {
+    value.trim_end_matches(['\r', '\n', ' ', '\t'])
 }
 
 #[cfg(test)]
@@ -433,5 +557,15 @@ mod tests {
         assert_eq!(materialized.trust_epoch, "epoch-1");
         assert!(signer_peers.exists());
         assert!(signer_action_pub.exists());
+        let checked = verify_runtime_trust_projection_for_local(
+            &signed_twice,
+            "signer-a",
+            &signer_vault,
+            &signer_pass,
+            &signer_peers,
+            &signer_action_pub,
+        )
+        .expect("check local");
+        assert_eq!(checked.trust_epoch, "epoch-1");
     }
 }

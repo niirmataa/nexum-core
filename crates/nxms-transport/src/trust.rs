@@ -76,13 +76,19 @@ pub struct RuntimeTrustBundle {
 }
 
 impl RuntimeTrustBundle {
-    pub fn load(path: impl Into<PathBuf>) -> Result<Self> {
+    pub fn load_unverified(path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
         let raw = std::fs::read(&path)
             .with_context(|| format!("failed to read runtime trust bundle {}", path.display()))?;
         let bundle: Self = serde_json::from_slice(&raw)
             .with_context(|| format!("invalid runtime trust bundle {}", path.display()))?;
         bundle.validate()?;
+        Ok(bundle)
+    }
+
+    pub fn load_verified(path: impl Into<PathBuf>) -> Result<Self> {
+        let bundle = Self::load_unverified(path)?;
+        bundle.verify_guard_quorum()?;
         Ok(bundle)
     }
 
@@ -122,10 +128,11 @@ impl RuntimeTrustBundle {
         if peers.is_empty() {
             bail!("runtime trust bundle requires at least one host identity");
         }
-        let peers = peers
+        let mut peers = peers
             .iter()
             .map(RuntimeTrustPeer::from_host_identity)
             .collect::<Result<Vec<_>>>()?;
+        sort_runtime_trust_peers(&mut peers);
         let bundle = Self {
             schema: default_schema(),
             trust_epoch: trust_epoch.into(),
@@ -222,7 +229,7 @@ impl RuntimeTrustBundle {
     }
 
     pub fn hash_hex(&self) -> Result<String> {
-        let canonical = canonical_unsigned_json(self)?;
+        let canonical = canonical_unsigned_json(self, true)?;
         let raw = serde_json::to_vec(&canonical)?;
         Ok(hex::encode(Sha256::digest(raw)))
     }
@@ -434,14 +441,45 @@ fn validate_signature_metadata(signature: &RuntimeTrustSignature) -> Result<()> 
     Ok(())
 }
 
-fn canonical_unsigned_json(bundle: &RuntimeTrustBundle) -> Result<serde_json::Value> {
+fn canonical_unsigned_json(
+    bundle: &RuntimeTrustBundle,
+    sort_peers_for_hash: bool,
+) -> Result<serde_json::Value> {
+    let peers = if sort_peers_for_hash {
+        let mut peers = bundle.peers.clone();
+        sort_runtime_trust_peers(&mut peers);
+        peers
+    } else {
+        bundle.peers.clone()
+    };
     let value = serde_json::json!({
         "schema": bundle.schema,
         "trust_epoch": bundle.trust_epoch,
-        "peers": bundle.peers,
+        "peers": peers,
         "action_token": bundle.action_token,
     });
     Ok(canonicalize_json(&value))
+}
+
+fn sort_runtime_trust_peers(peers: &mut [RuntimeTrustPeer]) {
+    peers.sort_by(|a, b| {
+        (
+            a.id.as_str(),
+            a.role.as_str(),
+            a.host.as_str(),
+            a.port,
+            a.kem_pk_b64.as_str(),
+            a.sig_pk_b64.as_str(),
+        )
+            .cmp(&(
+                b.id.as_str(),
+                b.role.as_str(),
+                b.host.as_str(),
+                b.port,
+                b.kem_pk_b64.as_str(),
+                b.sig_pk_b64.as_str(),
+            ))
+    });
 }
 
 fn canonicalize_json(v: &serde_json::Value) -> serde_json::Value {
@@ -517,6 +555,7 @@ fn write_bytes_atomic(path: &Path, value: &[u8], mode: u32) -> Result<()> {
 mod tests {
     use super::*;
     use crate::crypto::Keys;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn sample_action_token() -> RuntimeActionTokenIssuer {
         RuntimeActionTokenIssuer {
@@ -525,6 +564,18 @@ mod tests {
             public_key_pem:
                 "-----BEGIN PUBLIC KEY-----\nMIIB...\n-----END PUBLIC KEY-----\n".to_string(),
         }
+    }
+
+    fn unique_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "nxms_runtime_trust_{}_{}_{}.json",
+            label,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ))
     }
 
     #[test]
@@ -566,6 +617,52 @@ mod tests {
     }
 
     #[test]
+    fn runtime_trust_hash_is_stable_across_peer_order() {
+        let signer_keys = Keys::generate().expect("signer keys");
+        let ag01_keys = Keys::generate().expect("ag01 keys");
+        let ag02_keys = Keys::generate().expect("ag02 keys");
+        let signer = HostIdentityBundle::from_local_keys(
+            "signer-a",
+            "signer",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+            443,
+            &signer_keys,
+        )
+        .expect("signer");
+        let ag01 = HostIdentityBundle::from_local_keys(
+            "ag01",
+            "ag-01",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion",
+            443,
+            &ag01_keys,
+        )
+        .expect("ag01");
+        let ag02 = HostIdentityBundle::from_local_keys(
+            "ag02",
+            "ag-02",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccc.onion",
+            443,
+            &ag02_keys,
+        )
+        .expect("ag02");
+
+        let bundle_a = RuntimeTrustBundle::from_host_identities(
+            "epoch-1",
+            &[signer.clone(), ag01.clone(), ag02.clone()],
+            sample_action_token(),
+        )
+        .expect("bundle a");
+        let bundle_b = RuntimeTrustBundle::from_host_identities(
+            "epoch-1",
+            &[ag02, signer, ag01],
+            sample_action_token(),
+        )
+        .expect("bundle b");
+
+        assert_eq!(bundle_a.hash_hex().expect("hash a"), bundle_b.hash_hex().expect("hash b"));
+    }
+
+    #[test]
     fn runtime_trust_bundle_requires_guard_quorum() {
         let ag01_keys = Keys::generate().expect("ag01 keys");
         let ag02_keys = Keys::generate().expect("ag02 keys");
@@ -601,5 +698,38 @@ mod tests {
             .sign_with_local_keys("ag02", "ag-02", &ag02_keys, 2)
             .expect("sign ag02");
         bundle.verify_guard_quorum().expect("guard quorum");
+    }
+
+    #[test]
+    fn runtime_trust_load_verified_rejects_unsigned_bundle() {
+        let ag01_keys = Keys::generate().expect("ag01 keys");
+        let ag02_keys = Keys::generate().expect("ag02 keys");
+        let peers = vec![
+            HostIdentityBundle::from_local_keys(
+                "ag01",
+                "ag-01",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion",
+                443,
+                &ag01_keys,
+            )
+            .expect("ag01"),
+            HostIdentityBundle::from_local_keys(
+                "ag02",
+                "ag-02",
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccc.onion",
+                443,
+                &ag02_keys,
+            )
+            .expect("ag02"),
+        ];
+        let bundle =
+            RuntimeTrustBundle::from_host_identities("epoch-1", &peers, sample_action_token())
+                .expect("bundle");
+        let path = unique_path("unsigned");
+        bundle.write_json(&path).expect("write");
+
+        RuntimeTrustBundle::load_unverified(&path).expect("load_unverified");
+        let err = RuntimeTrustBundle::load_verified(&path).expect_err("load_verified must fail");
+        assert!(err.to_string().contains("requires exactly 2 guard signatures"));
     }
 }
