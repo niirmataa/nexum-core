@@ -1,14 +1,10 @@
 use crate::config::SignerConfig;
 use anyhow::{Result, anyhow, bail};
-use nxms_transport::crypto::Keys;
 use nxms_transport::bootstrap::{
-    export_host_identity_with_passphrase, generate_local_host_vault_with_passphrase,
     materialize_runtime_trust_for_local_with_passphrase,
     verify_runtime_trust_projection_for_local_with_passphrase,
 };
-use nxms_transport::host_identity::HostIdentityBundle;
 use nxms_transport::trust::RuntimeTrustBundle;
-use std::path::Path;
 
 pub fn load_runtime_trust_bundle_from_config(
     cfg: &SignerConfig,
@@ -40,32 +36,6 @@ pub fn materialize_runtime_trust_from_config(cfg: &SignerConfig) -> Result<Runti
     )?;
     validate_action_token_config_against_bundle(cfg, &bundle)?;
     Ok(bundle)
-}
-
-pub fn generate_local_host_vault(cfg: &SignerConfig) -> Result<Keys> {
-    generate_local_host_vault_with_passphrase(
-        &cfg.local_id,
-        &cfg.host_vault_dir,
-        &cfg.host_vault_passphrase,
-    )
-}
-
-pub fn export_host_identity_from_config(
-    cfg: &SignerConfig,
-    role: &str,
-    host: &str,
-    port: u16,
-    out: &Path,
-) -> Result<HostIdentityBundle> {
-    export_host_identity_with_passphrase(
-        &cfg.local_id,
-        role,
-        host,
-        port,
-        &cfg.host_vault_dir,
-        &cfg.host_vault_passphrase,
-        out,
-    )
 }
 
 pub fn validate_runtime_trust_projection(cfg: &SignerConfig) -> Result<Option<RuntimeTrustBundle>> {

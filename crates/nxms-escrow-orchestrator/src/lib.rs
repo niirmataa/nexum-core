@@ -9,10 +9,6 @@ pub use action_token::{
     ActionTokenClaims, ActionTokenCliInput, ActionTokenCommand, ActionTokenOp, ActionTokenRole,
     IssuedActionTokenOutput, build_issue_params, handle_action_token, issue_action_token,
 };
-pub use nxms_transport::bootstrap::{
-    export_host_identity, generate_local_host_vault, init_runtime_trust_bundle, sign_runtime_trust_bundle,
-    verify_runtime_trust_bundle,
-};
 pub use db::{OrchestratorDb, SloAlertThresholds};
 
 const ENV_BRIDGE_TOKEN_INPUT: &str = "NXMS_ORCH_BRIDGE_TOKEN_INPUT";

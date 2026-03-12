@@ -11,10 +11,6 @@ use nxms_signer::{
     AuditLogRow, PendingTxSign, SecurityAlertThresholds, SignEventAuditRow, SignerAgent,
     SignerConfig, SignerDb, SnapshotRow, SnapshotSigRow, normalize_hex_exact, now_ms,
 };
-use nxms_signer::trust::{
-    export_host_identity_from_config, generate_local_host_vault,
-    materialize_runtime_trust_from_config,
-};
 use nxms_transport::host_vault::load_host_keys;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -68,12 +64,6 @@ enum Command {
     Security {
         #[command(subcommand)]
         cmd: SecurityCommand,
-    },
-
-    /// Runtime trust bundle materialization and checks.
-    Trust {
-        #[command(subcommand)]
-        cmd: TrustCommand,
     },
 }
 
@@ -268,35 +258,6 @@ enum SecurityCommand {
     },
 }
 
-#[derive(Subcommand, Debug)]
-enum TrustCommand {
-    /// Generate local signer host vault with encrypted PQ key material.
-    GenerateKeys {
-        #[arg(long, env = "NXMS_SIGNER_CONFIG", default_value = "nxms-signer.toml")]
-        config: PathBuf,
-    },
-
-    /// Export public host identity bundle from the configured host vault.
-    ExportHostIdentity {
-        #[arg(long, env = "NXMS_SIGNER_CONFIG", default_value = "nxms-signer.toml")]
-        config: PathBuf,
-        #[arg(long)]
-        role: String,
-        #[arg(long)]
-        host: String,
-        #[arg(long)]
-        port: u16,
-        #[arg(long)]
-        out: PathBuf,
-    },
-
-    /// Materialize peers.json and action_token_pub.pem from runtime_trust_bundle.
-    Materialize {
-        #[arg(long, env = "NXMS_SIGNER_CONFIG", default_value = "nxms-signer.toml")]
-        config: PathBuf,
-    },
-}
-
 #[derive(Debug, Serialize)]
 struct EvidenceSectionHashes {
     active_snapshot: Option<String>,
@@ -344,7 +305,6 @@ async fn main() -> Result<()> {
         Command::Pending { cmd } => handle_pending_cmd(cmd).await?,
         Command::Audit { cmd } => handle_audit_cmd(cmd).await?,
         Command::Security { cmd } => handle_security_cmd(cmd).await?,
-        Command::Trust { cmd } => handle_trust_cmd(cmd).await?,
     }
     Ok(())
 }
@@ -706,46 +666,6 @@ async fn handle_security_cmd(cmd: SecurityCommand) -> Result<()> {
                     report.findings.len()
                 ));
             }
-        }
-    }
-    Ok(())
-}
-
-async fn handle_trust_cmd(cmd: TrustCommand) -> Result<()> {
-    match cmd {
-        TrustCommand::GenerateKeys { config } => {
-            let cfg = SignerConfig::from_toml_path(config)?;
-            let keys = generate_local_host_vault(&cfg)?;
-            println!("host_vault: {}", cfg.host_vault_dir.display());
-            println!("local_id: {}", cfg.local_id);
-            println!("kem: {}", nxms_transport::crypto::suite_kem_id());
-            println!("sig: {}", nxms_transport::crypto::suite_sig_id());
-            println!("pk_kem_b64: {}", keys.kem_pk_b64);
-            println!("pk_sig_b64: {}", keys.sig_pk_b64);
-        }
-        TrustCommand::ExportHostIdentity {
-            config,
-            role,
-            host,
-            port,
-            out,
-        } => {
-            let cfg = SignerConfig::from_toml_path(config)?;
-            let bundle = export_host_identity_from_config(&cfg, &role, &host, port, &out)?;
-            println!("{}", serde_json::to_string_pretty(&bundle)?);
-        }
-        TrustCommand::Materialize { config } => {
-            let cfg = SignerConfig::from_toml_path(config)?;
-            let bundle = materialize_runtime_trust_from_config(&cfg)?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "trust_epoch": bundle.trust_epoch,
-                    "local_id": cfg.local_id,
-                    "peers_path": cfg.peers_path,
-                    "action_token_public_key_path": cfg.action_token.as_ref().map(|v| v.public_key_pem_path.clone()),
-                }))?
-            );
         }
     }
     Ok(())
