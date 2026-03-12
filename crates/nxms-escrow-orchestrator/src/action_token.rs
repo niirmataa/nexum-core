@@ -742,6 +742,7 @@ mod tests {
             sandbox_id: "sbx-1".to_string(),
             audience: "sandbox:sbx-1".to_string(),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
         })
     }
 

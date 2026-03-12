@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod action_token;
+pub mod bootstrap;
 pub mod db;
 pub mod flow;
 pub mod tx_profile;
@@ -8,6 +9,10 @@ pub mod tx_profile;
 pub use action_token::{
     ActionTokenClaims, ActionTokenCliInput, ActionTokenCommand, ActionTokenOp, ActionTokenRole,
     IssuedActionTokenOutput, build_issue_params, handle_action_token, issue_action_token,
+};
+pub use bootstrap::{
+    export_host_identity, generate_local_host_vault, init_runtime_trust_bundle, sign_runtime_trust_bundle,
+    verify_runtime_trust_bundle,
 };
 pub use db::{OrchestratorDb, SloAlertThresholds};
 

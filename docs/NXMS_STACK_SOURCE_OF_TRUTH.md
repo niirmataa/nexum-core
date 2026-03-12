@@ -236,9 +236,10 @@ Dopuszczalny etap wykonawczy przed pełnym rozdzieleniem ról:
 - bez zmiany docelowego modelu hostowego i bez uznawania tego za finalną architekturę.
 
 Bootstrap runtime:
-- każdy host runtime generuje lokalnie własny sekret hostowy, np. `keys.json` dla `signer`,
+- każdy host runtime generuje lokalnie własny zaszyfrowany sekret hostowy, tj. `host vault`,
 - aktywny peer set runtime i aktywny issuer runtime auth mają pochodzić z guard-approved trust bundle dla danej epoki,
 - lokalne pliki runtime takie jak `peers.json` i `action_token_pub.pem` są tylko materializacją aktywnego trust bundle, a nie samodzielnym source of truth,
+- passphrase do `host vault` nie ma być trwałym sekretem na dysku; docelowy baseline to runtime secret w `/run/...` na `tmpfs`, a brak unseal ma kończyć się fail-closed,
 - zwykłe escrow ma działać jako `AUTO multisig` po jednorazowym legalnym admission danego escrow do auto-runtime.
 
 ---
@@ -246,17 +247,17 @@ Bootstrap runtime:
 ## 9a. Bootstrap runtime i source of truth
 
 Kolejność bootstrapu przed pierwszym escrow:
-1. Każdy host core generuje lokalnie własny sekret hostowy i lokalny publiczny bundle hosta.
+1. Każdy host core generuje lokalnie własny zaszyfrowany `host vault` i lokalny publiczny `HostIdentityBundle`.
 2. Do guardów trafiają tylko publiczne bundle hostów, nigdy prywatne sekrety hosta.
 3. `AG-01 + AG-02` zatwierdzają aktywną epokę runtime i podpisują `runtime_trust_bundle`.
 4. Każdy host materializuje lokalnie z aktywnego `runtime_trust_bundle` pliki runtime potrzebne do startu.
-5. Host startuje tylko wtedy, gdy jego lokalny sekret i aktywny trust bundle są zgodne; inaczej fail-closed.
+5. Host startuje tylko wtedy, gdy jego lokalny `host vault`, runtime unseal secret i aktywny trust bundle są zgodne; inaczej fail-closed.
 
 Jedynym source of truth dla aktywnego trustu runtime jest:
 - `runtime_trust_bundle` podpisany przez `AG-01 + AG-02`.
 
 Lokalne pliki runtime są tylko projekcją tego bundle:
-- `keys.json` jest lokalnym sekretem hosta i nie pochodzi z zewnątrz,
+- `host vault` jest lokalnym sekretem hosta i nie pochodzi z zewnątrz,
 - `peers.json` jest lokalną projekcją aktywnego peer setu z `runtime_trust_bundle`,
 - `action_token_pub.pem` jest lokalną projekcją aktywnego publicznego klucza issuera runtime auth z `runtime_trust_bundle`.
 
@@ -293,11 +294,38 @@ Po wydaniu `escrow_admission_artifact`:
 
 - `customer_identity_record`: powstaje w `customer service .onion` po poprawnym `register + challenge-response`; jest źródłem tożsamości klienta dla nowych escrow.
 - `customer_identity_snapshot`: powstaje przy `open escrow`; jest zamrożonym przypięciem identity `buyer` i `seller` do konkretnego escrow.
-- `keys.json`: powstaje lokalnie na hoście runtime; jest sekretem hosta i nie jest dostarczany przez guardy ani orchestrator.
+- `host vault`: powstaje lokalnie na hoście runtime; zawiera prywatne klucze hosta i nie jest dostarczany przez guardy ani orchestrator.
+- `HostIdentityBundle`: powstaje lokalnie z publicznej połowy `host vault`; jest jedynym artefaktem hosta przekazywanym do guardów przy bootstrapie.
 - `runtime_trust_bundle`: powstaje z publicznych bundli hostów i jest podpisywany przez `AG-01 + AG-02`; jest jedynym source of truth dla aktywnego trustu runtime.
 - `peers.json`: powstaje lokalnie jako projekcja `runtime_trust_bundle`; jest używany przez `nxms-transport`, ale nie jest samodzielnym trust rootem.
 - `action_token_pub.pem`: powstaje lokalnie jako projekcja `runtime_trust_bundle`; wskazuje aktywny publiczny klucz issuera runtime auth.
 - `escrow_admission_artifact`: powstaje dla konkretnego escrow z intentu orchestratora i snapshotu klienta; jest podpisywany przez `AG-01 + AG-02` raz, na wejściu escrow do auto-runtime.
+
+---
+
+## 9d. Współbieżność i execution lanes
+
+Docelowy model ma rozdzielać:
+- współbieżność stanową escrow,
+- od bounded współbieżności wykonawczej.
+
+To oznacza:
+- wiele escrow może być aktywnych równolegle w stanach takich jak `multisig_setup_pending`, `funding_wait` albo `delivery_wait`,
+- jedno długie escrow nie może monopolizować signer pair przez cały swój lifetime,
+- każde escrow ma własny workflow state, własny wallet/workspace context i własne odniesienia do snapshot/admission/trust epoch,
+- krytyczne sekcje wykonawcze, tj. `multisig ceremony step`, `sign` i `submit`, zużywają tylko krótki bounded execution slot.
+
+Kontrakt skalowania:
+- system ma być równoległy stanowo,
+- execution ma być sekwencyjny albo o bardzo małej, kontrolowanej równoległości,
+- klient nr 2 nie czeka na pełne zamknięcie escrow klienta nr 1; czeka co najwyżej na następny bounded slot wykonawczy dla swojej operacji,
+- przy wzroście ruchu skaluje się przez kolejkowanie, bounded lanes i późniejszy sharding signer pair, a nie przez luzowanie guard/legality modelu.
+
+To jest wymaganie architektoniczne, nie detal implementacyjny.
+Model `AUTO multisig` ma pozostać:
+- fail-closed,
+- anti-capture first,
+- bez pełnej równoległości w krytycznych operacjach wallet/sign/submit.
 
 ---
 
