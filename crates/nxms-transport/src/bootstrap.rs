@@ -1,8 +1,8 @@
+use crate::crypto::Keys;
+use crate::host_identity::HostIdentityBundle;
+use crate::host_vault::{self, HostVault, load_host_keys, vault_bin_path};
+use crate::trust::{RuntimeActionTokenIssuer, RuntimeTrustBundle};
 use anyhow::{Context, Result, anyhow, bail};
-use nxms_transport::host_identity::HostIdentityBundle;
-use nxms_transport::host_vault::{HostVault, load_host_keys, vault_bin_path};
-use nxms_transport::trust::{RuntimeActionTokenIssuer, RuntimeTrustBundle};
-use nxms_transport::{crypto::Keys, host_vault};
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -109,6 +109,27 @@ pub fn sign_runtime_trust_bundle(
 pub fn verify_runtime_trust_bundle(bundle_path: &Path) -> Result<RuntimeTrustBundle> {
     let bundle = RuntimeTrustBundle::load(bundle_path)?;
     bundle.verify_guard_quorum()?;
+    Ok(bundle)
+}
+
+pub fn materialize_runtime_trust_for_local(
+    bundle_path: &Path,
+    local_id: &str,
+    host_vault_dir: &Path,
+    host_vault_passphrase_file: &Path,
+    peers_path: &Path,
+    action_token_public_key_pem_path: &Path,
+) -> Result<RuntimeTrustBundle> {
+    let passphrase = read_owner_only_text(host_vault_passphrase_file, "host_vault_passphrase_file")?;
+    let keys = load_host_keys(host_vault_dir, passphrase.as_str()).with_context(|| {
+        format!(
+            "failed to load host vault {}",
+            host_vault::vault_bin_path(host_vault_dir).display()
+        )
+    })?;
+    let bundle = verify_runtime_trust_bundle(bundle_path)?;
+    bundle.validate_local_keys(local_id, &keys)?;
+    bundle.materialize_for_local(local_id, peers_path, action_token_public_key_pem_path)?;
     Ok(bundle)
 }
 
@@ -232,7 +253,7 @@ mod tests {
 
     fn unique_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "nxms_orch_bootstrap_{}_{}_{}",
+            "nxms_transport_bootstrap_{}_{}_{}",
             label,
             std::process::id(),
             SystemTime::now()
@@ -286,9 +307,11 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_init_sign_and_verify_runtime_trust_bundle() {
+    fn bootstrap_init_sign_verify_and_materialize_runtime_trust_bundle() {
         let dir = unique_dir("signed_bundle");
         let action_pem = dir.join("action_token_pub.pem");
+        let signer_peers = dir.join("runtime/peers.json");
+        let signer_action_pub = dir.join("runtime/action_token_pub.pem");
         write_public_pem(&action_pem);
 
         let signer_pass = dir.join("signer/run/passphrase");
@@ -397,5 +420,18 @@ mod tests {
         let bundle = verify_runtime_trust_bundle(&signed_twice).expect("verify final bundle");
         assert_eq!(bundle.trust_epoch, "epoch-1");
         assert_eq!(bundle.signatures.len(), 2);
+
+        let materialized = materialize_runtime_trust_for_local(
+            &signed_twice,
+            "signer-a",
+            &signer_vault,
+            &signer_pass,
+            &signer_peers,
+            &signer_action_pub,
+        )
+        .expect("materialize for local");
+        assert_eq!(materialized.trust_epoch, "epoch-1");
+        assert!(signer_peers.exists());
+        assert!(signer_action_pub.exists());
     }
 }

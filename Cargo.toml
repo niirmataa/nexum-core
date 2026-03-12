@@ -8,6 +8,7 @@ publish = false
 resolver = "2"
 members = [
   "crates/nxms-transport",
+  "crates/nxms-host-bootstrap",
   "crates/nxms-mailbox",
   "crates/nxms-mailbox-client",
   "crates/nxms-monero-core",
