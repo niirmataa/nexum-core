@@ -927,6 +927,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nxms-host-bootstrap"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "nxms-transport",
+ "serde_json",
+]
+
+[[package]]
 name = "nxms-mailbox"
 version = "0.1.0"
 dependencies = [
