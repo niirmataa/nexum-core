@@ -152,6 +152,73 @@ Data startu notatek: 2026-03-11
 - Warstwy bootstrap, operator access i recovery nie mogą być zlane w jeden „master access”.
 - Główny materiał bootstrap/recovery i zwykła ścieżka operatorska to różne rzeczy.
 
+### 9a. Customer service `.onion` i rola klienta
+
+- `customer service .onion` jest jedyną legalną ścieżką klienta do systemu.
+- Ta rola obsługuje:
+  - rejestrację,
+  - challenge-response,
+  - `open escrow`,
+  - `status`,
+  - bounded customer event typu `delivered`.
+- Nie należy opisywać tej warstwy jako "HTTP auth layer"; istotna jest rola logiczna customer service `.onion`, nie lokalny adapter transportowy.
+- Dane z `nexum-cli register/challenge` nie mogą kończyć życia jako chwilowa sesja; muszą tworzyć trwały `customer identity record`.
+- Przy `open escrow` system ma zamrażać `customer identity snapshot` dla `buyer` i `seller`.
+- Po `open escrow` i funding klient nie steruje runtime core.
+- Docelowy customer flow:
+  - `buyer` otwiera escrow,
+  - system zwraca adres multisig do wpłaty,
+  - `buyer` wpłaca,
+  - system informuje `seller`, że escrow jest ufundowane,
+  - `seller` wysyła towar poza systemem,
+  - `buyer` zgłasza `delivered`,
+  - runtime core automatycznie kończy escrow do `seller`.
+
+### 9b. Jednorazowe quorum AG dla escrow
+
+- `AG-01` i `AG-02` muszą być obecne w zwykłym escrow flow raz, dając legalne quorum admission dla konkretnego escrow.
+- Nie jest to model ręcznego udziału guardów w każdym późniejszym kroku runtime.
+- Najczystszy kontrakt to pojedynczy `escrow admission artifact` podpisany przez `AG-01` i `AG-02`.
+- Ten artefakt ma wiązać co najmniej:
+  - `escrow_id`,
+  - `customer identity snapshot`,
+  - payout/refund policy,
+  - aktywną epokę runtime trustu,
+  - zakres legalnego auto-flow dla danego escrow.
+- Po wydaniu tego artefaktu zwykłe escrow ma przejść do docelowego `AUTO multisig` runtime bez dalszego ręcznego udziału guardów.
+
+### 9c. Runtime trust i artefakty hostowe
+
+- `mailbox` tylko przesyła ciphertext envelope i na tym kończy swoją rolę.
+- `mailbox` nie jest źródłem legalności, trust rootem ani źródłem prawdy workflow.
+- `keys.json` jest lokalnym sekretem hosta runtime i ma powstawać lokalnie na danym hoście.
+- `peers.json` nie może być ręcznie klejonym źródłem prawdy; ma być lokalną materializacją aktywnego guard-approved trust bundle.
+- `action_token_pub.pem` także ma być tylko lokalną materializacją aktywnego trust bundle, a nie luźnym plikiem z niejasnego pochodzenia.
+- `orchestrator` prowadzi zwykły `AUTO multisig` runtime.
+- `operator` nadzoruje `orchestrator` boundedly, ale nie tworzy legalności systemu.
+- `AG-01` i `AG-02` mają podpisywać warunki legalnego działania automatu, a nie każdy codzienny runtime packet.
+
+### 9d. Domkniety lifecycle bootstrapu i escrow
+
+- Bootstrap runtime przed pierwszym escrow:
+  - każdy host core generuje lokalnie własny sekret hostowy,
+  - host publikuje tylko publiczny bundle hosta,
+  - `AG-01` i `AG-02` podpisują aktywny `runtime_trust_bundle`,
+  - każdy host materializuje lokalnie `peers.json` i `action_token_pub.pem`,
+  - host startuje tylko przy zgodności lokalnego sekretu z aktywnym trust bundle.
+- Lifecycle klienta:
+  - `nexum-cli` generuje lokalne klucze klienta,
+  - `customer service .onion` tworzy `customer_identity_record`,
+  - `open escrow` zamraża `customer_identity_snapshot`,
+  - późniejsza rotacja kluczy klienta nie zmienia już aktywnego escrow.
+- Lifecycle escrow:
+  - orchestrator buduje escrow intent,
+  - `AG-01 + AG-02` podpisują jednorazowy `escrow_admission_artifact`,
+  - od tego momentu zwykłe escrow przechodzi do `AUTO multisig`,
+  - `buyer` po funding ma już tylko `status` i bounded event `delivered`,
+  - `orchestrator` wystawia krótkie runtime `action tokeny` tylko w granicach admission scope,
+  - `signer` wykonuje `sign/submit` tylko przy zgodności: trust epoch, admission scope, escrow hash i token claims.
+
 ## Wnioski
 
 ### Wniosek 1

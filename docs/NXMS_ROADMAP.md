@@ -28,6 +28,13 @@ swiadomie odlozony.
 - [ ] Utrzymac operatora poza quorum jako witness operacyjny.
 - [ ] Utrzymac warstwe komunikacji dostepnosci `AG <-> AG` i `operator <-> AG` jako niedecyzyjna.
 - [ ] Zamrozic waski tryb awaryjnego domkniecia escrow i `END SYSTEM`.
+- [x] Domknac model jednorazowego `escrow admission artifact` od `AG-01 + AG-02` dla zwyklego `AUTO multisig`.
+
+### B1. Bootstrap trustu i artefaktow runtime
+- [x] Domknac lifecycle `customer identity record` i `customer identity snapshot`.
+- [x] Domknac source of truth dla aktywnego `runtime trust bundle`.
+- [x] Domknac pochodzenie `keys.json`, `peers.json` i `action_token_pub.pem`.
+- [x] Domknac zasade, ze `mailbox` tylko przesyla, a nie legalizuje runtime.
 
 ### C. All-in-one logical split
 - [ ] Uruchomic na jednym hoście jako oddzielne role logiczne:

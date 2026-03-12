@@ -68,7 +68,9 @@ Mailbox:
 - nie zna logiki escrow,
 - nie zna plaintextu wiadomości,
 - nie jest źródłem prawdy workflow,
-- nie podejmuje decyzji biznesowych.
+- nie podejmuje decyzji biznesowych,
+- nie jest trust rootem ani źródłem legalności runtime,
+- kończy swoją rolę na relay / store-and-forward ciphertext envelope.
 
 ---
 
@@ -91,7 +93,8 @@ Signer nie jest zastępowany przez CLI ani przez mailbox.
 - prowadzi automat workflow,
 - trzyma stan procesu,
 - pilnuje timeoutów, retry i quorum,
-- przeprowadza ścieżkę od open escrow do close / fail.
+- przeprowadza ścieżkę od open escrow do close / fail,
+- po legalnym admission escrow prowadzi docelowy `AUTO multisig` runtime.
 
 Orchestrator jest control-plane systemu.
 Orchestrator nie jest ostatecznym źródłem autoryzacji wejścia/wyjścia flow.
@@ -113,6 +116,7 @@ Konsekwencje:
 - bez ważnego quorum guardów `2 z 2` system nie ma prawa dopuścić krytycznej akcji,
 - bez `2` ważnych podpisów `Falcon-1024-CT` i poprawnego `KEM package` system nie ma prawa legalnie się aktywować ani przejść przez punkt krytyczny,
 - signer i orchestrator nie zastępują guardów lokalną decyzją,
+- `AG-01` i `AG-02` nie prowadzą ręcznie zwykłego escrow step-by-step; ich normalna obecność w escrow flow ma być skupiona w pojedynczym quorum admission artifact dopuszczającym konkretne escrow do legalnego auto-runtime,
 - orchestrator może prowadzić workflow i agregować stan/proofy, ale nie może samodzielnie zastąpić quorum guardów,
 - guardy są częścią rdzenia systemu, a nie dodatkową warstwą auth,
 - guardy są najbardziej chronioną rolą hostową w całym NXMS.
@@ -167,6 +171,38 @@ System ma działać bez wymogu użycia `nexum-cli`.
 
 ---
 
+## 8a. Rola customer service `.onion`
+
+`customer service .onion`:
+- jest jedyną legalną ścieżką klienta do systemu,
+- obsługuje `register`, `challenge-response`, `open escrow`, `status` i bounded customer events typu `delivered`,
+- nie jest runtime core i nie prowadzi execution path escrow,
+- nie jest trust rootem i nie zastępuje guard quorum,
+- przekazuje do core nie tylko nicki, ale zamrożony `customer identity snapshot` przypięty do escrow.
+
+Docelowy flow klienta:
+- `buyer` otwiera escrow przez `customer service .onion`,
+- system zwraca adres multisig do wpłaty,
+- `buyer` wpłaca,
+- system informuje `seller`, że escrow jest ufundowane,
+- `buyer` po otrzymaniu towaru zgłasza `delivered`,
+- dalsze `sign/submit/close` wykonuje już automatycznie runtime core.
+
+---
+
+## 8b. Artefakty klienta
+
+`nexum-cli` pozostaje źródłem materiału kryptograficznego klienta, ale nie jest runtime core.
+
+Docelowy kontrakt:
+- klient lokalnie generuje swoje klucze i sekrety wyłącznie po swojej stronie,
+- do `customer service .onion` trafia tylko publiczny bundle rejestracyjny i proof z challenge-response,
+- wynikiem rejestracji jest trwały `customer_identity_record`,
+- przy `open escrow` `customer service .onion` zamraża `customer_identity_snapshot` dla `buyer` i `seller`,
+- aktywne escrow nigdy nie przepina się cicho na późniejszą rotację kluczy klienta; nowe klucze działają dopiero dla nowych escrow.
+
+---
+
 ## 9. Networking
 
 Docelowy model:
@@ -193,6 +229,75 @@ Docelowy stały runtime core:
 
 `operator-console` pozostaje oddzielnym, kontrolowanym środowiskiem użycia
 systemu i nie jest liczony jako część stałego konstytucyjnego runtime core.
+
+Dopuszczalny etap wykonawczy przed pełnym rozdzieleniem ról:
+- szybka lokalna weryfikacja runtime przez `OpenRC + Tor`,
+- uruchomienie i smoke-test `mailbox` / `signer` / `orchestrator`,
+- bez zmiany docelowego modelu hostowego i bez uznawania tego za finalną architekturę.
+
+Bootstrap runtime:
+- każdy host runtime generuje lokalnie własny sekret hostowy, np. `keys.json` dla `signer`,
+- aktywny peer set runtime i aktywny issuer runtime auth mają pochodzić z guard-approved trust bundle dla danej epoki,
+- lokalne pliki runtime takie jak `peers.json` i `action_token_pub.pem` są tylko materializacją aktywnego trust bundle, a nie samodzielnym source of truth,
+- zwykłe escrow ma działać jako `AUTO multisig` po jednorazowym legalnym admission danego escrow do auto-runtime.
+
+---
+
+## 9a. Bootstrap runtime i source of truth
+
+Kolejność bootstrapu przed pierwszym escrow:
+1. Każdy host core generuje lokalnie własny sekret hostowy i lokalny publiczny bundle hosta.
+2. Do guardów trafiają tylko publiczne bundle hostów, nigdy prywatne sekrety hosta.
+3. `AG-01 + AG-02` zatwierdzają aktywną epokę runtime i podpisują `runtime_trust_bundle`.
+4. Każdy host materializuje lokalnie z aktywnego `runtime_trust_bundle` pliki runtime potrzebne do startu.
+5. Host startuje tylko wtedy, gdy jego lokalny sekret i aktywny trust bundle są zgodne; inaczej fail-closed.
+
+Jedynym source of truth dla aktywnego trustu runtime jest:
+- `runtime_trust_bundle` podpisany przez `AG-01 + AG-02`.
+
+Lokalne pliki runtime są tylko projekcją tego bundle:
+- `keys.json` jest lokalnym sekretem hosta i nie pochodzi z zewnątrz,
+- `peers.json` jest lokalną projekcją aktywnego peer setu z `runtime_trust_bundle`,
+- `action_token_pub.pem` jest lokalną projekcją aktywnego publicznego klucza issuera runtime auth z `runtime_trust_bundle`.
+
+`mailbox` tokeny są tylko scoped sekretami operacyjnymi transportu.
+Nie są trust rootem, nie legalizują runtime i nie zastępują quorum guardów.
+
+---
+
+## 9b. Jednorazowe quorum AG dla escrow
+
+Zwykłe escrow ma otrzymywać od `AG-01 + AG-02` dokładnie jeden konstytucyjny artefakt wejścia do auto-runtime:
+- `escrow_admission_artifact`.
+
+Ten artefakt ma wiązać co najmniej:
+- `escrow_id`,
+- `customer_identity_snapshot` dla `buyer` i `seller`,
+- `runtime_trust_epoch`,
+- policy dla zwykłego auto-flow danego escrow,
+- hash intentu escrow przekazanego przez orchestrator.
+
+Po wydaniu `escrow_admission_artifact`:
+- `orchestrator` prowadzi zwykły `AUTO multisig`,
+- `buyer` i `seller` nie sterują signerami,
+- `AG-01` i `AG-02` nie uczestniczą już w każdym kroku codziennego runtime.
+
+`action token` jest artefaktem wykonawczym, nie konstytucyjnym:
+- wystawia go aktywny issuer runtime zatwierdzony w `runtime_trust_bundle`,
+- signer weryfikuje go względem `action_token_pub.pem`,
+- signer uznaje go tylko wtedy, gdy token mieści się w zakresie aktywnego `escrow_admission_artifact` i aktywnej epoki trustu.
+
+---
+
+## 9c. Kanoniczna mapa artefaktów
+
+- `customer_identity_record`: powstaje w `customer service .onion` po poprawnym `register + challenge-response`; jest źródłem tożsamości klienta dla nowych escrow.
+- `customer_identity_snapshot`: powstaje przy `open escrow`; jest zamrożonym przypięciem identity `buyer` i `seller` do konkretnego escrow.
+- `keys.json`: powstaje lokalnie na hoście runtime; jest sekretem hosta i nie jest dostarczany przez guardy ani orchestrator.
+- `runtime_trust_bundle`: powstaje z publicznych bundli hostów i jest podpisywany przez `AG-01 + AG-02`; jest jedynym source of truth dla aktywnego trustu runtime.
+- `peers.json`: powstaje lokalnie jako projekcja `runtime_trust_bundle`; jest używany przez `nxms-transport`, ale nie jest samodzielnym trust rootem.
+- `action_token_pub.pem`: powstaje lokalnie jako projekcja `runtime_trust_bundle`; wskazuje aktywny publiczny klucz issuera runtime auth.
+- `escrow_admission_artifact`: powstaje dla konkretnego escrow z intentu orchestratora i snapshotu klienta; jest podpisywany przez `AG-01 + AG-02` raz, na wejściu escrow do auto-runtime.
 
 ---
 
