@@ -13,6 +13,7 @@ hex = "0.4"
 libc = { version = "0.2", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 socks = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
 zeroize = { version = "1", optional = true }

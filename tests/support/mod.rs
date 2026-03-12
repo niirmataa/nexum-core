@@ -27,8 +27,10 @@ use nxms_signer::{
     },
     SignerAgent,
 };
+use nxms_transport::admission::EscrowAdmissionArtifact;
 use nxms_transport::crypto::{decrypt, encrypt, suite_kem_id, suite_sig_id, Keys, SealedPacket};
 use nxms_transport::peers::{Peer, PeerBook};
+use nxms_transport::trust::{RuntimeActionTokenIssuer, RuntimeTrustBundle, RuntimeTrustPeer};
 use nxms_transport::wire::{
     msg_type_key, EscrowAction, EscrowBody, MsgType, NxmsEnvelope, NxmsPayload, TxSignReqBody,
     ESCROW_APP_PROTO_V1,
@@ -54,6 +56,8 @@ pub struct WorkspaceSignerHarness {
     pub db: SignerDb,
     pub local_keys: Keys,
     pub peer_keys: Keys,
+    pub ag01_keys: Keys,
+    pub ag02_keys: Keys,
     pub mailbox_url: String,
     wallet_state: Arc<WalletMockState>,
 }
@@ -74,6 +78,8 @@ impl WorkspaceSignerHarness {
 
         let local_keys = Keys::generate().context("generate local keys")?;
         let peer_keys = Keys::generate().context("generate peer keys")?;
+        let ag01_keys = Keys::generate().context("generate ag01 keys")?;
+        let ag02_keys = Keys::generate().context("generate ag02 keys")?;
         let keys_path = tempdir.path().join("local_keys.json");
         let peers_path = tempdir.path().join("peers.json");
         let action_pub_key_path = tempdir.path().join("action_token_ed25519.pub.pem");
@@ -91,6 +97,7 @@ impl WorkspaceSignerHarness {
             nettype: "stagenet".to_string(),
             peers_path,
             keys_path,
+            runtime_trust_bundle_path: None,
             db_path: db_path.clone(),
             mailbox_url: mailbox_url.clone(),
             mailbox_push_token: Some("push-token-123456".to_string()),
@@ -141,6 +148,8 @@ impl WorkspaceSignerHarness {
             db,
             local_keys,
             peer_keys,
+            ag01_keys,
+            ag02_keys,
             mailbox_url,
             wallet_state,
         })
@@ -226,6 +235,29 @@ impl WorkspaceSignerHarness {
         Ok(())
     }
 
+    pub async fn push_sign_request_with_admission(
+        &self,
+        escrow_id_hex: &str,
+        snapshot_hash_hex: &str,
+        seq: u64,
+        escrow_admission_artifact: EscrowAdmissionArtifact,
+    ) -> Result<()> {
+        let ingress_client = MailboxClient::builder(&self.mailbox_url)?
+            .push_token("push-token-123456")
+            .build()?;
+        let req_env = build_tx_sign_req_envelope_with_admission(
+            &self.local_keys,
+            &self.peer_keys,
+            escrow_id_hex,
+            snapshot_hash_hex,
+            seq,
+            Some(escrow_admission_artifact),
+        )
+        .await?;
+        ingress_client.push(&req_env, Some(60)).await?;
+        Ok(())
+    }
+
     pub async fn wait_for_pending_id(&self) -> Result<i64> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -247,6 +279,42 @@ impl WorkspaceSignerHarness {
         txset_hash_hex: &str,
         jti: &str,
     ) -> Result<String> {
+        self.build_sign_action_token_with_trust_epoch(
+            escrow_id_hex,
+            snapshot_hash_hex,
+            txset_hash_hex,
+            jti,
+            None,
+        )
+    }
+
+    pub fn build_sign_action_token_with_trust_epoch(
+        &self,
+        escrow_id_hex: &str,
+        snapshot_hash_hex: &str,
+        txset_hash_hex: &str,
+        jti: &str,
+        runtime_trust_epoch: Option<&str>,
+    ) -> Result<String> {
+        self.build_sign_action_token_with_runtime(
+            escrow_id_hex,
+            snapshot_hash_hex,
+            txset_hash_hex,
+            jti,
+            runtime_trust_epoch,
+            None,
+        )
+    }
+
+    pub fn build_sign_action_token_with_runtime(
+        &self,
+        escrow_id_hex: &str,
+        snapshot_hash_hex: &str,
+        txset_hash_hex: &str,
+        jti: &str,
+        runtime_trust_epoch: Option<&str>,
+        escrow_admission_hash: Option<&str>,
+    ) -> Result<String> {
         let now = unix_now_secs();
         let claims = ActionClaims {
             iss: "nxms-auth".to_string(),
@@ -262,6 +330,8 @@ impl WorkspaceSignerHarness {
             txset_hash: txset_hash_hex.to_string(),
             snapshot_hash: snapshot_hash_hex.to_string(),
             nettype: self.cfg.nettype.clone(),
+            runtime_trust_epoch: runtime_trust_epoch.map(str::to_string),
+            escrow_admission_hash: escrow_admission_hash.map(str::to_string),
             iat: now,
             nbf: now,
             exp: now + 120,
@@ -283,6 +353,50 @@ impl WorkspaceSignerHarness {
         proof_arbiter_jti: &str,
         proof_seller_jti: &str,
     ) -> Result<String> {
+        self.build_submit_action_token_with_trust_epoch(
+            escrow_id_hex,
+            snapshot_hash_hex,
+            txset_hash_hex,
+            jti,
+            proof_arbiter_jti,
+            proof_seller_jti,
+            None,
+        )
+    }
+
+    pub fn build_submit_action_token_with_trust_epoch(
+        &self,
+        escrow_id_hex: &str,
+        snapshot_hash_hex: &str,
+        txset_hash_hex: &str,
+        jti: &str,
+        proof_arbiter_jti: &str,
+        proof_seller_jti: &str,
+        runtime_trust_epoch: Option<&str>,
+    ) -> Result<String> {
+        self.build_submit_action_token_with_runtime(
+            escrow_id_hex,
+            snapshot_hash_hex,
+            txset_hash_hex,
+            jti,
+            proof_arbiter_jti,
+            proof_seller_jti,
+            runtime_trust_epoch,
+            None,
+        )
+    }
+
+    pub fn build_submit_action_token_with_runtime(
+        &self,
+        escrow_id_hex: &str,
+        snapshot_hash_hex: &str,
+        txset_hash_hex: &str,
+        jti: &str,
+        proof_arbiter_jti: &str,
+        proof_seller_jti: &str,
+        runtime_trust_epoch: Option<&str>,
+        escrow_admission_hash: Option<&str>,
+    ) -> Result<String> {
         let now = unix_now_secs();
         let claims = ActionClaims {
             iss: "nxms-auth".to_string(),
@@ -298,6 +412,8 @@ impl WorkspaceSignerHarness {
             txset_hash: txset_hash_hex.to_string(),
             snapshot_hash: snapshot_hash_hex.to_string(),
             nettype: self.cfg.nettype.clone(),
+            runtime_trust_epoch: runtime_trust_epoch.map(str::to_string),
+            escrow_admission_hash: escrow_admission_hash.map(str::to_string),
             iat: now,
             nbf: now,
             exp: now + 120,
@@ -330,6 +446,26 @@ impl WorkspaceSignerHarness {
 
     pub fn decode_envelope_body(&self, env: &NxmsEnvelope) -> Result<EscrowBody> {
         decode_envelope_body(env, &self.local_keys, &self.peer_keys)
+    }
+
+    pub fn build_escrow_admission_artifact(
+        &self,
+        escrow_id_hex: &str,
+        snapshot_hash_hex: &str,
+        action: EscrowAction,
+        runtime_trust_epoch: &str,
+    ) -> Result<EscrowAdmissionArtifact> {
+        let now = now_ms();
+        let mut artifact = EscrowAdmissionArtifact::new(
+            escrow_id_hex,
+            snapshot_hash_hex,
+            action,
+            runtime_trust_epoch,
+            now,
+        );
+        artifact.sign_with_local_keys("ag01", "ag-01", &self.ag01_keys, now)?;
+        artifact.sign_with_local_keys("ag02", "ag-02", &self.ag02_keys, now)?;
+        Ok(artifact)
     }
 
     pub fn wallet_calls(&self) -> Vec<String> {
@@ -542,6 +678,71 @@ fn encode_action_claims(claims: &ActionClaims) -> Result<String> {
     Ok(encode(&Header::new(Algorithm::EdDSA), claims, &key)?)
 }
 
+pub fn write_runtime_trust_bundle(
+    path: &Path,
+    local_id: &str,
+    local_keys: &Keys,
+    peer_id: &str,
+    peer_keys: &Keys,
+    ag01_keys: &Keys,
+    ag02_keys: &Keys,
+    action_token_public_key_path: &Path,
+    trust_epoch: &str,
+) -> Result<()> {
+    let action_token_public_key = std::fs::read_to_string(action_token_public_key_path)
+        .with_context(|| format!("read {}", action_token_public_key_path.display()))?;
+    let bundle = RuntimeTrustBundle {
+        schema: "nxms-runtime-trust-bundle/v1".to_string(),
+        trust_epoch: trust_epoch.to_string(),
+        peers: vec![
+            RuntimeTrustPeer {
+                id: local_id.to_string(),
+                role: "signer".to_string(),
+                host: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion"
+                    .to_string(),
+                port: 443,
+                kem_pk_b64: local_keys.kem_pk_b64.clone(),
+                sig_pk_b64: local_keys.sig_pk_b64.clone(),
+            },
+            RuntimeTrustPeer {
+                id: peer_id.to_string(),
+                role: "orchestrator".to_string(),
+                host: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion"
+                    .to_string(),
+                port: 443,
+                kem_pk_b64: peer_keys.kem_pk_b64.clone(),
+                sig_pk_b64: peer_keys.sig_pk_b64.clone(),
+            },
+            RuntimeTrustPeer {
+                id: "ag01".to_string(),
+                role: "ag-01".to_string(),
+                host: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccc.onion"
+                    .to_string(),
+                port: 443,
+                kem_pk_b64: ag01_keys.kem_pk_b64.clone(),
+                sig_pk_b64: ag01_keys.sig_pk_b64.clone(),
+            },
+            RuntimeTrustPeer {
+                id: "ag02".to_string(),
+                role: "ag-02".to_string(),
+                host: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddd.onion"
+                    .to_string(),
+                port: 443,
+                kem_pk_b64: ag02_keys.kem_pk_b64.clone(),
+                sig_pk_b64: ag02_keys.sig_pk_b64.clone(),
+            },
+        ],
+        action_token: RuntimeActionTokenIssuer {
+            issuer: "nxms-auth".to_string(),
+            algorithm: "EDDSA".to_string(),
+            public_key_pem: action_token_public_key,
+        },
+    };
+    std::fs::write(path, serde_json::to_vec_pretty(&bundle)?)
+        .with_context(|| format!("write runtime trust bundle {}", path.display()))?;
+    Ok(())
+}
+
 fn decode_escrow_id_hex(escrow_id_hex: &str) -> Result<[u8; 16]> {
     let raw = hex::decode(escrow_id_hex).context("decode escrow id hex")?;
     raw.try_into()
@@ -555,12 +756,32 @@ async fn build_tx_sign_req_envelope(
     snapshot_hash_hex: &str,
     seq: u64,
 ) -> Result<NxmsEnvelope> {
+    build_tx_sign_req_envelope_with_admission(
+        local_keys,
+        peer_keys,
+        escrow_id_hex,
+        snapshot_hash_hex,
+        seq,
+        None,
+    )
+    .await
+}
+
+async fn build_tx_sign_req_envelope_with_admission(
+    local_keys: &Keys,
+    peer_keys: &Keys,
+    escrow_id_hex: &str,
+    snapshot_hash_hex: &str,
+    seq: u64,
+    escrow_admission_artifact: Option<EscrowAdmissionArtifact>,
+) -> Result<NxmsEnvelope> {
     let escrow_id_raw = decode_escrow_id_hex(escrow_id_hex)?;
     let body = EscrowBody::TxSignReq(TxSignReqBody {
         escrow_id_hex: escrow_id_hex.to_string(),
         action: EscrowAction::Release,
         multisig_txset_hex: "aa11".to_string(),
         snapshot_hash_hex: snapshot_hash_hex.to_string(),
+        escrow_admission_artifact,
         human_hint: Some("approve release".to_string()),
     });
     let payload = NxmsPayload {

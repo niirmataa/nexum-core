@@ -160,6 +160,7 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
         txset_hash_hex: txset_hash_hex.clone(),
         role: ActionTokenRole::Arbiter,
         op: ActionTokenOp::SubmitMultisig,
+        runtime_trust_bundle_path: None,
         issuer: Some("nxms-auth".to_string()),
         algorithm: "EDDSA".to_string(),
         private_key_pem_path: Some(orchestrator_key_path),

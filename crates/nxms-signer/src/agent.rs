@@ -5,8 +5,8 @@ use crate::audit_event::{
 };
 use crate::config::SignerConfig;
 use crate::db::{
-    AuditLogInsert, PendingTxSign, SecurityAlertReport, SecurityAlertThresholds, SecurityDashboard,
-    SignerDb,
+    AuditLogInsert, EscrowAdmissionArtifactRow, PendingTxSign, SecurityAlertReport,
+    SecurityAlertThresholds, SecurityDashboard, SignerDb,
 };
 use crate::orchestrator_bridge::{
     enforce_production_requirements, verify_submit_quorum_proof_bundle,
@@ -14,12 +14,14 @@ use crate::orchestrator_bridge::{
 use crate::snapshot::{
     ContractSnapshot, canonical_policy_hash_sha256_hex, validate_transfer_against_snapshot,
 };
+use crate::trust::validate_runtime_trust_projection;
 use crate::wallet_rpc::{SignedMultisigTx, WalletRpcClient};
 use anyhow::{Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use nxms_mailbox_client::MailboxClient;
 use nxms_transport::crypto::{Keys, SealedPacket, decrypt, encrypt, suite_kem_id, suite_sig_id};
 use nxms_transport::peers::PeerBook;
+use nxms_transport::trust::RuntimeTrustBundle;
 use nxms_transport::wire::{
     ESCROW_APP_PROTO_V1, EscrowAction, EscrowBody, EscrowErrBody, MsgType, NxmsEnvelope,
     NxmsPayload, TxSignRespBody, msg_type_key,
@@ -35,6 +37,7 @@ pub struct SignerAgent {
     mailbox: MailboxClient,
     wallet: WalletRpcClient,
     action_token_verifier: Option<ActionTokenVerifier>,
+    runtime_trust_bundle: Option<RuntimeTrustBundle>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -65,6 +68,7 @@ impl SignerAgent {
         enforce_production_requirements(cfg.production_hardening)?;
         let peers = PeerBook::load(cfg.peers_path.clone())?;
         let keys = Keys::read_json(&cfg.keys_path)?;
+        let runtime_trust_bundle = validate_runtime_trust_projection(&cfg, &keys, &peers)?;
         let db = SignerDb::new(cfg.db_path.clone());
         db.init().await?;
 
@@ -123,6 +127,7 @@ impl SignerAgent {
             mailbox,
             wallet,
             action_token_verifier,
+            runtime_trust_bundle,
         })
     }
 
@@ -308,6 +313,87 @@ impl SignerAgent {
         self.db
             .audit_security_alert_report(window_ms, thresholds)
             .await
+    }
+
+    pub(crate) fn requires_escrow_admission(&self) -> bool {
+        self.runtime_trust_bundle.is_some()
+    }
+
+    pub(crate) fn build_admission_row(
+        &self,
+        artifact: &nxms_transport::admission::EscrowAdmissionArtifact,
+    ) -> Result<EscrowAdmissionArtifactRow> {
+        let hash_hex = artifact.hash_hex()?;
+        let now_ms = now_ms();
+        Ok(EscrowAdmissionArtifactRow {
+            escrow_id_hex: artifact.escrow_id_hex.clone(),
+            snapshot_hash_hex: artifact.snapshot_hash_hex.clone(),
+            action: serde_json::to_string(&artifact.action)?.trim_matches('"').to_string(),
+            runtime_trust_epoch: artifact.runtime_trust_epoch.clone(),
+            artifact_hash_hex: hash_hex,
+            artifact_json: serde_json::to_string(artifact)?,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        })
+    }
+
+    pub(crate) fn verify_escrow_admission_artifact(
+        &self,
+        artifact: &nxms_transport::admission::EscrowAdmissionArtifact,
+        escrow_id_hex: &str,
+        snapshot_hash_hex: &str,
+        action: EscrowAction,
+    ) -> Result<String> {
+        let bundle = self
+            .runtime_trust_bundle
+            .as_ref()
+            .ok_or_else(|| anyhow!("runtime trust bundle not configured"))?;
+        artifact.verify_against_bundle(bundle)?;
+        if !artifact.escrow_id_hex.eq_ignore_ascii_case(escrow_id_hex) {
+            return Err(anyhow!("escrow admission escrow_id mismatch"));
+        }
+        if !artifact
+            .snapshot_hash_hex
+            .eq_ignore_ascii_case(snapshot_hash_hex)
+        {
+            return Err(anyhow!("escrow admission snapshot_hash mismatch"));
+        }
+        if artifact.action != action {
+            return Err(anyhow!("escrow admission action mismatch"));
+        }
+        artifact.hash_hex()
+    }
+
+    pub(crate) async fn validate_stored_escrow_admission(
+        &self,
+        escrow_id_hex: &str,
+        snapshot_hash_hex: &str,
+        action: EscrowAction,
+        expected_hash_hex: Option<&str>,
+    ) -> Result<()> {
+        let Some(_) = &self.runtime_trust_bundle else {
+            return Ok(());
+        };
+        let row = self
+            .db
+            .get_escrow_admission_artifact(escrow_id_hex)
+            .await?
+            .ok_or_else(|| anyhow!("missing escrow admission artifact for escrow {}", escrow_id_hex))?;
+        let artifact: nxms_transport::admission::EscrowAdmissionArtifact =
+            serde_json::from_str(&row.artifact_json)?;
+        let actual_hash_hex =
+            self.verify_escrow_admission_artifact(&artifact, escrow_id_hex, snapshot_hash_hex, action)?;
+        if !actual_hash_hex.eq_ignore_ascii_case(&row.artifact_hash_hex) {
+            return Err(anyhow!("stored escrow admission hash drift detected"));
+        }
+        if let Some(expected_hash_hex) = expected_hash_hex {
+            let expected_hash_hex =
+                normalize_hex_exact(expected_hash_hex, 64, "action_token.escrow_admission_hash")?;
+            if actual_hash_hex != expected_hash_hex {
+                return Err(anyhow!("action token escrow_admission_hash mismatch"));
+            }
+        }
+        Ok(())
     }
 }
 

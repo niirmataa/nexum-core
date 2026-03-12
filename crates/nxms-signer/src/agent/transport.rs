@@ -157,6 +157,21 @@ impl SignerAgent {
             ));
         }
         let snapshot: ContractSnapshot = serde_json::from_str(&active.snapshot_json)?;
+        let snapshot_hash_for_admission = canonical_policy_hash_sha256_hex(&snapshot)?;
+        if self.requires_escrow_admission() {
+            let artifact = req
+                .escrow_admission_artifact
+                .as_ref()
+                .ok_or_else(|| anyhow!("tx_sign_req missing escrow_admission_artifact"))?;
+            let _ = self.verify_escrow_admission_artifact(
+                artifact,
+                &req.escrow_id_hex,
+                &snapshot_hash_for_admission,
+                req.action.clone(),
+            )?;
+            let row = self.build_admission_row(artifact)?;
+            self.db.upsert_escrow_admission_artifact(&row).await?;
+        }
 
         self.wallet.ensure_wallet_open().await?;
         let (check, raw_desc) = self

@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Result, anyhow, bail};
 use clap::{Subcommand, ValueEnum};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use nxms_transport::trust::RuntimeTrustBundle;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +39,8 @@ pub enum ActionTokenCommand {
         op: ActionTokenOp,
         #[arg(long)]
         bridge_token: Option<String>,
+        #[arg(long)]
+        runtime_trust_bundle_path: Option<PathBuf>,
         #[arg(long, env = ENV_ACTION_TOKEN_ISSUER)]
         issuer: Option<String>,
         #[arg(long, env = ENV_ACTION_TOKEN_ALGORITHM, default_value = "EDDSA")]
@@ -127,6 +130,7 @@ pub struct IssueActionTokenParams {
     sandbox_id: String,
     audience: String,
     nettype: String,
+    runtime_trust_epoch: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,6 +148,10 @@ pub struct ActionTokenClaims {
     pub txset_hash: String,
     pub snapshot_hash: String,
     pub nettype: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_trust_epoch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub escrow_admission_hash: Option<String>,
     pub iat: u64,
     pub nbf: u64,
     pub exp: u64,
@@ -173,6 +181,7 @@ pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
             role,
             op,
             bridge_token,
+            runtime_trust_bundle_path,
             issuer,
             algorithm,
             private_key_pem_path,
@@ -189,6 +198,7 @@ pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
                 txset_hash_hex,
                 role,
                 op,
+                runtime_trust_bundle_path,
                 issuer,
                 algorithm,
                 private_key_pem_path,
@@ -214,6 +224,7 @@ pub struct ActionTokenCliInput {
     pub txset_hash_hex: String,
     pub role: ActionTokenRole,
     pub op: ActionTokenOp,
+    pub runtime_trust_bundle_path: Option<PathBuf>,
     pub issuer: Option<String>,
     pub algorithm: String,
     pub private_key_pem_path: Option<PathBuf>,
@@ -226,6 +237,11 @@ pub struct ActionTokenCliInput {
 }
 
 pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionTokenParams> {
+    let runtime_trust_bundle = input
+        .runtime_trust_bundle_path
+        .as_ref()
+        .map(RuntimeTrustBundle::load)
+        .transpose()?;
     let escrow_id_hex = normalize_hex_exact(&input.escrow_id_hex, 32, "escrow_id_hex")?;
     let txset_hash_hex = normalize_hex_exact(&input.txset_hash_hex, 64, "txset_hash_hex")?;
     let issuer = normalize_non_empty(
@@ -234,6 +250,22 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
         256,
     )?;
     let algorithm = parse_algorithm(&input.algorithm)?;
+    if let Some(bundle) = &runtime_trust_bundle {
+        if issuer != bundle.action_token.issuer {
+            bail!(
+                "issuer '{}' does not match runtime trust bundle issuer '{}'",
+                issuer,
+                bundle.action_token.issuer
+            );
+        }
+        if algorithm_name(algorithm) != bundle.action_token.algorithm.trim().to_ascii_uppercase() {
+            bail!(
+                "algorithm '{}' does not match runtime trust bundle algorithm '{}'",
+                algorithm_name(algorithm),
+                bundle.action_token.algorithm
+            );
+        }
+    }
     let private_key_pem_path = input.private_key_pem_path.or_else(|| {
         std::env::var(ENV_ACTION_TOKEN_PRIVATE_KEY_PEM_PATH)
             .ok()
@@ -303,6 +335,7 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
         sandbox_id,
         audience,
         nettype,
+        runtime_trust_epoch: runtime_trust_bundle.map(|bundle| bundle.trust_epoch),
     })
 }
 
@@ -371,6 +404,8 @@ async fn build_claims(
         txset_hash: params.txset_hash_hex.clone(),
         snapshot_hash: normalize_hex_exact(&workflow.snapshot_hash_hex, 64, "snapshot_hash_hex")?,
         nettype: params.nettype.clone(),
+        runtime_trust_epoch: params.runtime_trust_epoch.clone(),
+        escrow_admission_hash: None,
         iat: now,
         nbf: now,
         exp: now.saturating_add(ttl_secs),
@@ -381,6 +416,28 @@ async fn build_claims(
         proof_seller_req_id: None,
     };
 
+    let admission = db.get_escrow_admission_artifact(&params.escrow_id_hex).await?;
+    if let Some(admission) = admission {
+        if admission.snapshot_hash_hex != claims.snapshot_hash {
+            bail!("escrow admission snapshot_hash mismatch against workflow");
+        }
+        if let Some(expected_epoch) = &params.runtime_trust_epoch
+            && admission.runtime_trust_epoch != *expected_epoch
+        {
+            bail!("escrow admission runtime_trust_epoch mismatch");
+        }
+        if admission.action != workflow_action_key(&_proposal.action)? {
+            bail!("escrow admission action mismatch against proposal");
+        }
+        claims.escrow_admission_hash = Some(normalize_hex_exact(
+            &admission.artifact_hash_hex,
+            64,
+            "escrow_admission_hash",
+        )?);
+    } else if params.runtime_trust_epoch.is_some() {
+        bail!("missing escrow admission artifact for runtime-trusted action token issuance");
+    }
+
     if matches!(params.op, ActionTokenOp::SubmitMultisig) {
         let bundle = db
             .get_submit_multisig_proof_bundle(&params.escrow_id_hex, &params.txset_hash_hex)
@@ -389,6 +446,11 @@ async fn build_claims(
     }
 
     Ok(claims)
+}
+
+fn workflow_action_key(action: &str) -> Result<String> {
+    normalize_non_empty(action.to_string(), "proposal.action", 32)
+        .map(|value| value.to_ascii_lowercase())
 }
 
 fn apply_submit_proof_bundle(
@@ -440,6 +502,14 @@ fn parse_algorithm(raw: &str) -> Result<Algorithm> {
         "EDDSA" => Ok(Algorithm::EdDSA),
         "ES256" => Ok(Algorithm::ES256),
         _ => bail!("unsupported action token algorithm '{}'", raw.trim()),
+    }
+}
+
+fn algorithm_name(algorithm: Algorithm) -> String {
+    match algorithm {
+        Algorithm::EdDSA => "EDDSA".to_string(),
+        Algorithm::ES256 => "ES256".to_string(),
+        _ => "UNSUPPORTED".to_string(),
     }
 }
 
@@ -867,6 +937,7 @@ mod tests {
             txset_hash_hex: "aa".repeat(32),
             role: ActionTokenRole::Seller,
             op: ActionTokenOp::SignMultisig,
+            runtime_trust_bundle_path: None,
             issuer: Some("nxms-auth".to_string()),
             algorithm: "EDDSA".to_string(),
             private_key_pem_path: Some(key_path.clone()),

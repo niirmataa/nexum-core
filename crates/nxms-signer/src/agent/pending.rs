@@ -117,13 +117,22 @@ impl SignerAgent {
         let snapshot: ContractSnapshot = serde_json::from_str(&active.snapshot_json)?;
         let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot)?;
         let action = parse_pending_action(&pending.action)?;
+        if self.requires_escrow_admission() {
+            self.validate_stored_escrow_admission(
+                &pending.escrow_id_hex,
+                &snapshot_hash_for_token,
+                action.clone(),
+                None,
+            )
+            .await?;
+        }
         self.wallet.ensure_wallet_open().await?;
         let (check, _) = self
             .wallet
             .describe_transfer(&pending.multisig_txset_hex)
             .await
             .map_err(|e| anyhow!("describe_transfer failed during approval: {}", e))?;
-        if let Err(err) = validate_transfer_against_snapshot(&snapshot, action, &check) {
+        if let Err(err) = validate_transfer_against_snapshot(&snapshot, action.clone(), &check) {
             let detail = format!(
                 "policy check failed during approval for pending_id={}: {}",
                 pending.id, err
@@ -180,6 +189,15 @@ impl SignerAgent {
                 req_id_for_audit = Some(verified.req_id.clone());
                 jti_for_audit = Some(verified.claims.jti.clone());
                 exp_for_audit = Some(verified.claims.exp);
+                if self.requires_escrow_admission() {
+                    self.validate_stored_escrow_admission(
+                        &pending.escrow_id_hex,
+                        &snapshot_hash_for_token,
+                        action.clone(),
+                        verified.claims.escrow_admission_hash.as_deref(),
+                    )
+                    .await?;
+                }
 
                 if let Err(err) = self
                     .db

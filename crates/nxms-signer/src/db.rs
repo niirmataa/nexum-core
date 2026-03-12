@@ -37,6 +37,18 @@ pub struct SnapshotRow {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct EscrowAdmissionArtifactRow {
+    pub escrow_id_hex: String,
+    pub snapshot_hash_hex: String,
+    pub action: String,
+    pub runtime_trust_epoch: String,
+    pub artifact_hash_hex: String,
+    pub artifact_json: String,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct SignEventAuditRow {
     pub role: String,
     pub sign_round: String,
@@ -242,6 +254,29 @@ impl SignerDb {
         let escrow_id_hex = escrow_id_hex.to_string();
         tokio::task::spawn_blocking(move || active_snapshot_for_escrow_sync(&path, &escrow_id_hex))
             .await?
+    }
+
+    pub async fn upsert_escrow_admission_artifact(
+        &self,
+        row: &EscrowAdmissionArtifactRow,
+    ) -> Result<()> {
+        let path = self.path.clone();
+        let row = row.clone();
+        tokio::task::spawn_blocking(move || upsert_escrow_admission_artifact_sync(&path, &row))
+            .await??;
+        Ok(())
+    }
+
+    pub async fn get_escrow_admission_artifact(
+        &self,
+        escrow_id_hex: &str,
+    ) -> Result<Option<EscrowAdmissionArtifactRow>> {
+        let path = self.path.clone();
+        let escrow_id_hex = escrow_id_hex.to_string();
+        tokio::task::spawn_blocking(move || {
+            get_escrow_admission_artifact_sync(&path, &escrow_id_hex)
+        })
+        .await?
     }
 
     pub async fn enqueue_pending_tx(&self, pending: &PendingTxSign) -> Result<()> {
@@ -648,6 +683,19 @@ fn init_sync(path: &PathBuf) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_snapshots_escrow_status ON snapshots(escrow_id_hex, status);
 
+        CREATE TABLE IF NOT EXISTS escrow_admission_artifacts (
+            escrow_id_hex        TEXT PRIMARY KEY,
+            snapshot_hash_hex    TEXT NOT NULL,
+            action               TEXT NOT NULL CHECK(action IN ('release', 'refund')),
+            runtime_trust_epoch  TEXT NOT NULL,
+            artifact_hash_hex    TEXT NOT NULL,
+            artifact_json        TEXT NOT NULL,
+            created_at_ms        INTEGER NOT NULL,
+            updated_at_ms        INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_escrow_admission_artifacts_hash
+            ON escrow_admission_artifacts(artifact_hash_hex, updated_at_ms DESC);
+
         CREATE TABLE IF NOT EXISTS snapshot_sigs (
             id                   INTEGER PRIMARY KEY AUTOINCREMENT,
             hash_hex             TEXT NOT NULL,
@@ -1002,6 +1050,70 @@ fn active_snapshot_for_escrow_sync(
             Ok(SnapshotRow {
                 hash_hex: row.get(0)?,
                 snapshot_json: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn upsert_escrow_admission_artifact_sync(
+    path: &PathBuf,
+    row: &EscrowAdmissionArtifactRow,
+) -> Result<()> {
+    let conn = open(path)?;
+    conn.execute(
+        r#"
+        INSERT INTO escrow_admission_artifacts(
+            escrow_id_hex, snapshot_hash_hex, action, runtime_trust_epoch,
+            artifact_hash_hex, artifact_json, created_at_ms, updated_at_ms
+        ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(escrow_id_hex) DO UPDATE SET
+            snapshot_hash_hex=excluded.snapshot_hash_hex,
+            action=excluded.action,
+            runtime_trust_epoch=excluded.runtime_trust_epoch,
+            artifact_hash_hex=excluded.artifact_hash_hex,
+            artifact_json=excluded.artifact_json,
+            updated_at_ms=excluded.updated_at_ms
+        "#,
+        params![
+            row.escrow_id_hex,
+            row.snapshot_hash_hex,
+            row.action,
+            row.runtime_trust_epoch,
+            row.artifact_hash_hex,
+            row.artifact_json,
+            i64::try_from(row.created_at_ms).unwrap_or(i64::MAX),
+            i64::try_from(row.updated_at_ms).unwrap_or(i64::MAX),
+        ],
+    )?;
+    Ok(())
+}
+
+fn get_escrow_admission_artifact_sync(
+    path: &PathBuf,
+    escrow_id_hex: &str,
+) -> Result<Option<EscrowAdmissionArtifactRow>> {
+    let conn = open(path)?;
+    conn.query_row(
+        r#"
+        SELECT escrow_id_hex, snapshot_hash_hex, action, runtime_trust_epoch,
+               artifact_hash_hex, artifact_json, created_at_ms, updated_at_ms
+        FROM escrow_admission_artifacts
+        WHERE escrow_id_hex=?1
+        LIMIT 1
+        "#,
+        params![escrow_id_hex],
+        |row| {
+            Ok(EscrowAdmissionArtifactRow {
+                escrow_id_hex: row.get(0)?,
+                snapshot_hash_hex: row.get(1)?,
+                action: row.get(2)?,
+                runtime_trust_epoch: row.get(3)?,
+                artifact_hash_hex: row.get(4)?,
+                artifact_json: row.get(5)?,
+                created_at_ms: u64::try_from(row.get::<_, i64>(6)?).unwrap_or(0),
+                updated_at_ms: u64::try_from(row.get::<_, i64>(7)?).unwrap_or(0),
             })
         },
     )

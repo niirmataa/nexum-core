@@ -31,6 +31,15 @@ impl SignerAgent {
             .ok_or_else(|| anyhow!("no active snapshot for escrow {}", escrow_id_hex))?;
         let snapshot: ContractSnapshot = serde_json::from_str(&active.snapshot_json)?;
         let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot)?;
+        if self.requires_escrow_admission() {
+            self.validate_stored_escrow_admission(
+                &escrow_id_hex,
+                &snapshot_hash_for_token,
+                action.clone(),
+                None,
+            )
+            .await?;
+        }
 
         self.wallet.ensure_wallet_open().await?;
         let (check, _) = self
@@ -38,7 +47,7 @@ impl SignerAgent {
             .describe_transfer(&tx_data_hex)
             .await
             .map_err(|e| anyhow!("describe_transfer failed during sign: {}", e))?;
-        validate_transfer_against_snapshot(&snapshot, action, &check)?;
+        validate_transfer_against_snapshot(&snapshot, action.clone(), &check)?;
 
         let mut req_id_for_audit: Option<String> = None;
         let mut jti_for_audit: Option<String> = None;
@@ -89,6 +98,15 @@ impl SignerAgent {
                 req_id_for_audit = Some(verified.req_id.clone());
                 jti_for_audit = Some(verified.claims.jti.clone());
                 exp_for_audit = Some(verified.claims.exp);
+                if self.requires_escrow_admission() {
+                    self.validate_stored_escrow_admission(
+                        &escrow_id_hex,
+                        &snapshot_hash_for_token,
+                        action.clone(),
+                        verified.claims.escrow_admission_hash.as_deref(),
+                    )
+                    .await?;
+                }
 
                 if let Err(err) = self
                     .db
@@ -578,6 +596,15 @@ impl SignerAgent {
             .ok_or_else(|| anyhow!("no active snapshot for escrow {}", escrow_id_hex))?;
         let snapshot: ContractSnapshot = serde_json::from_str(&active.snapshot_json)?;
         let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot)?;
+        if self.requires_escrow_admission() {
+            self.validate_stored_escrow_admission(
+                &escrow_id_hex,
+                &snapshot_hash_for_token,
+                action.clone(),
+                None,
+            )
+            .await?;
+        }
 
         self.wallet.ensure_wallet_open().await?;
         let (check, _) = self
@@ -585,7 +612,7 @@ impl SignerAgent {
             .describe_transfer(&tx_data_hex)
             .await
             .map_err(|e| anyhow!("describe_transfer failed during submit: {}", e))?;
-        validate_transfer_against_snapshot(&snapshot, action, &check)?;
+        validate_transfer_against_snapshot(&snapshot, action.clone(), &check)?;
 
         let mut req_id_for_audit: Option<String> = None;
         let mut jti_for_audit: Option<String> = None;
@@ -637,6 +664,15 @@ impl SignerAgent {
                 req_id_for_audit = Some(verified.req_id.clone());
                 jti_for_audit = Some(verified.claims.jti.clone());
                 exp_for_audit = Some(verified.claims.exp);
+                if self.requires_escrow_admission() {
+                    self.validate_stored_escrow_admission(
+                        &escrow_id_hex,
+                        &snapshot_hash_for_token,
+                        action.clone(),
+                        verified.claims.escrow_admission_hash.as_deref(),
+                    )
+                    .await?;
+                }
 
                 if let Err(err) = self
                     .db

@@ -1,3 +1,4 @@
+use crate::admission::EscrowAdmissionArtifact;
 use serde::{Deserialize, Serialize};
 
 pub const NXMS_PROTO_V1: &str = "NXMS/1";
@@ -148,6 +149,8 @@ pub struct TxSignReqBody {
     pub action: EscrowAction,
     pub multisig_txset_hex: String,
     pub snapshot_hash_hex: String,
+    #[serde(default)]
+    pub escrow_admission_artifact: Option<EscrowAdmissionArtifact>,
     pub human_hint: Option<String>,
 }
 

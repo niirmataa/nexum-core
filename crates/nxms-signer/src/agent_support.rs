@@ -533,6 +533,7 @@ mod tests {
                 action: EscrowAction::Release,
                 multisig_txset_hex: rand_ascii(&mut seed, 512),
                 snapshot_hash_hex: rand_ascii(&mut seed, 96),
+                escrow_admission_artifact: None,
                 human_hint: Some(rand_ascii(&mut seed, 48)),
             };
             let _ = validate_tx_sign_req(&payload, &req, 256);

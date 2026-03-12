@@ -1,4 +1,5 @@
 use crate::config::{SignerConfig, SignerRole};
+use crate::trust::load_runtime_trust_bundle_from_config;
 use anyhow::{Result, anyhow};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,10 @@ pub struct ActionClaims {
     pub txset_hash: String,
     pub snapshot_hash: String,
     pub nettype: String,
+    #[serde(default)]
+    pub runtime_trust_epoch: Option<String>,
+    #[serde(default)]
+    pub escrow_admission_hash: Option<String>,
     pub iat: u64,
     pub nbf: u64,
     pub exp: u64,
@@ -207,6 +212,7 @@ pub struct ActionTokenVerifier {
     sandbox_id: String,
     wallet_id: String,
     nettype: String,
+    runtime_trust_epoch: Option<String>,
     verify_rate_limiter: VerifyRateLimiter,
 }
 
@@ -227,6 +233,8 @@ impl ActionTokenVerifier {
             .audience
             .clone()
             .unwrap_or_else(|| format!("sandbox:{}", cfg.sandbox_id));
+        let runtime_trust_epoch =
+            load_runtime_trust_bundle_from_config(cfg)?.map(|bundle| bundle.trust_epoch);
 
         Ok(Some(Self {
             required: action_cfg.required,
@@ -240,6 +248,7 @@ impl ActionTokenVerifier {
             sandbox_id: cfg.sandbox_id.clone(),
             wallet_id: cfg.wallet_id.clone(),
             nettype: cfg.nettype.clone(),
+            runtime_trust_epoch,
             verify_rate_limiter: VerifyRateLimiter::new(
                 action_cfg.verify_rate_limit_max_attempts,
                 action_cfg.verify_rate_limit_window_secs,
@@ -429,6 +438,24 @@ impl ActionTokenVerifier {
         if claims.nettype.trim().to_ascii_lowercase() != self.nettype {
             return Err(anyhow!("action token nettype mismatch"));
         }
+        if let Some(expected_epoch) = &self.runtime_trust_epoch {
+            let claim_epoch = claims
+                .runtime_trust_epoch
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| anyhow!("action token runtime_trust_epoch missing"))?;
+            if claim_epoch != expected_epoch {
+                return Err(anyhow!("action token runtime_trust_epoch mismatch"));
+            }
+            let admission_hash = claims
+                .escrow_admission_hash
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow!("action token escrow_admission_hash missing"))?;
+            let _ = normalize_hex_64(admission_hash, "claims.escrow_admission_hash")?;
+        }
         if claims.jti.trim().is_empty() || claims.jti.len() > 256 {
             return Err(anyhow!("action token jti invalid"));
         }
@@ -575,6 +602,7 @@ mod tests {
             nettype: "stagenet".to_string(),
             peers_path: PathBuf::from("peers.json"),
             keys_path: PathBuf::from("keys.json"),
+            runtime_trust_bundle_path: None,
             db_path: PathBuf::from("signer.db"),
             mailbox_url: "http://mailbox.onion".to_string(),
             mailbox_push_token: Some("push-token-123456".to_string()),
@@ -640,6 +668,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now,
             nbf: now,
             exp: now + 60,
@@ -719,6 +749,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now,
             nbf: now,
             exp: now + 60,
@@ -785,6 +817,8 @@ mod tests {
             txset_hash: txset_hash_hex.clone(),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now,
             nbf: now,
             exp: now + 60,
@@ -891,6 +925,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now,
             nbf: now,
             exp: now + 60,
@@ -982,6 +1018,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now.saturating_sub(120),
             nbf: now.saturating_sub(120),
             exp: now.saturating_sub(10),
@@ -1034,6 +1072,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now,
             nbf: now,
             exp: now + 60,
@@ -1086,6 +1126,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now,
             nbf: now,
             exp: now + 600,
@@ -1138,6 +1180,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now + 600,
             nbf: now,
             exp: now + 700,
@@ -1190,6 +1234,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now,
             nbf: now + 60,
             exp: now + 120,
@@ -1247,6 +1293,8 @@ mod tests {
             txset_hash: "11".repeat(32),
             snapshot_hash: "22".repeat(32),
             nettype: "stagenet".to_string(),
+            runtime_trust_epoch: None,
+            escrow_admission_hash: None,
             iat: now,
             nbf: now,
             exp: now + 60,

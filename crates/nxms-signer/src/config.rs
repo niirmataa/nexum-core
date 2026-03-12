@@ -95,6 +95,8 @@ pub struct SignerConfig {
     pub nettype: String,
     pub peers_path: PathBuf,
     pub keys_path: PathBuf,
+    #[serde(default)]
+    pub runtime_trust_bundle_path: Option<PathBuf>,
     pub db_path: PathBuf,
 
     pub mailbox_url: String,
@@ -231,6 +233,11 @@ impl SignerConfig {
             _ => {
                 return Err(anyhow!("nettype must be one of: mainnet|stagenet|testnet"));
             }
+        }
+        if let Some(path) = &self.runtime_trust_bundle_path
+            && path.as_os_str().is_empty()
+        {
+            return Err(anyhow!("runtime_trust_bundle_path must not be empty"));
         }
         self.mailbox_url = self.mailbox_url.trim().trim_end_matches('/').to_string();
         if self.mailbox_url.is_empty() {
@@ -804,6 +811,7 @@ mod tests {
             nettype: "stagenet".to_string(),
             peers_path: PathBuf::from("peers.json"),
             keys_path: PathBuf::from("keys.json"),
+            runtime_trust_bundle_path: None,
             db_path: PathBuf::from("signer.db"),
             mailbox_url: "http://mailbox.onion".to_string(),
             mailbox_push_token: Some("1234567890abcdef-push".to_string()),

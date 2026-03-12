@@ -3,6 +3,7 @@ pub mod agent;
 pub mod config;
 pub mod db;
 pub mod snapshot;
+pub mod trust;
 pub mod worker_http;
 
 pub(crate) mod agent_support;

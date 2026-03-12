@@ -11,6 +11,7 @@ use nxms_signer::{
     AuditLogRow, PendingTxSign, SecurityAlertThresholds, SignEventAuditRow, SignerAgent,
     SignerConfig, SignerDb, SnapshotRow, SnapshotSigRow, normalize_hex_exact, now_ms,
 };
+use nxms_signer::trust::materialize_runtime_trust_from_config;
 use nxms_transport::crypto::Keys;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -64,6 +65,12 @@ enum Command {
     Security {
         #[command(subcommand)]
         cmd: SecurityCommand,
+    },
+
+    /// Runtime trust bundle materialization and checks.
+    Trust {
+        #[command(subcommand)]
+        cmd: TrustCommand,
     },
 }
 
@@ -258,6 +265,15 @@ enum SecurityCommand {
     },
 }
 
+#[derive(Subcommand, Debug)]
+enum TrustCommand {
+    /// Materialize peers.json and action_token_pub.pem from runtime_trust_bundle.
+    Materialize {
+        #[arg(long, env = "NXMS_SIGNER_CONFIG", default_value = "nxms-signer.toml")]
+        config: PathBuf,
+    },
+}
+
 #[derive(Debug, Serialize)]
 struct EvidenceSectionHashes {
     active_snapshot: Option<String>,
@@ -305,6 +321,7 @@ async fn main() -> Result<()> {
         Command::Pending { cmd } => handle_pending_cmd(cmd).await?,
         Command::Audit { cmd } => handle_audit_cmd(cmd).await?,
         Command::Security { cmd } => handle_security_cmd(cmd).await?,
+        Command::Trust { cmd } => handle_trust_cmd(cmd).await?,
     }
     Ok(())
 }
@@ -665,6 +682,25 @@ async fn handle_security_cmd(cmd: SecurityCommand) -> Result<()> {
                     report.findings.len()
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_trust_cmd(cmd: TrustCommand) -> Result<()> {
+    match cmd {
+        TrustCommand::Materialize { config } => {
+            let cfg = SignerConfig::from_toml_path(config)?;
+            let bundle = materialize_runtime_trust_from_config(&cfg)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "trust_epoch": bundle.trust_epoch,
+                    "local_id": cfg.local_id,
+                    "peers_path": cfg.peers_path,
+                    "action_token_public_key_path": cfg.action_token.as_ref().map(|v| v.public_key_pem_path.clone()),
+                }))?
+            );
         }
     }
     Ok(())

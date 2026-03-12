@@ -381,6 +381,7 @@ async fn make_agent(
         nettype: "stagenet".to_string(),
         peers_path: PathBuf::new(),
         keys_path: PathBuf::new(),
+        runtime_trust_bundle_path: None,
         db_path: PathBuf::new(),
         mailbox_url: mailbox_url.clone(),
         mailbox_push_token: Some("push-token-123456".to_string()),
@@ -485,6 +486,7 @@ async fn build_tx_sign_req_envelope_with_txset(
         action: nxms_transport::wire::EscrowAction::Release,
         multisig_txset_hex: multisig_txset_hex.to_string(),
         snapshot_hash_hex: snapshot_hash_hex.to_string(),
+        escrow_admission_artifact: None,
         human_hint: Some("approve release".to_string()),
     });
     let payload = NxmsPayload {
@@ -718,6 +720,8 @@ fn build_sign_action_claims(
         txset_hash: txset_hash_hex.to_string(),
         snapshot_hash: snapshot_hash_hex.to_string(),
         nettype: agent.cfg.nettype.clone(),
+        runtime_trust_epoch: None,
+            escrow_admission_hash: None,
         iat: now,
         nbf: now,
         exp: now + 120,
@@ -777,6 +781,8 @@ fn build_submit_action_token(
         txset_hash: txset_hash_hex.to_string(),
         snapshot_hash: snapshot_hash_hex.to_string(),
         nettype: agent.cfg.nettype.clone(),
+        runtime_trust_epoch: None,
+            escrow_admission_hash: None,
         iat: now,
         nbf: now,
         exp: now + 120,
@@ -872,6 +878,7 @@ fn validate_tx_sign_req_rejects_invalid_snapshot_hash() {
         action: EscrowAction::Release,
         multisig_txset_hex: "aa11".to_string(),
         snapshot_hash_hex: "not_hex".to_string(),
+        escrow_admission_artifact: None,
         human_hint: None,
     };
     let err = validate_tx_sign_req(&payload, &req, 2048).expect_err("must reject");
@@ -928,6 +935,7 @@ fn resolve_wallet_cli_wallet_file_prefers_wallet_dir_for_relative_name() {
         nettype: "stagenet".to_string(),
         peers_path: PathBuf::from("/tmp/peers.json"),
         keys_path: PathBuf::from("/tmp/keys.json"),
+        runtime_trust_bundle_path: None,
         db_path: PathBuf::from("/tmp/signer.db"),
         mailbox_url: "http://mailbox.onion".to_string(),
         mailbox_push_token: Some("push-token-123456".to_string()),
