@@ -14,6 +14,7 @@ pub fn load_runtime_trust_bundle_from_config(
         return Ok(None);
     };
     let bundle = RuntimeTrustBundle::load(path)?;
+    bundle.verify_guard_quorum()?;
     validate_action_token_config_against_bundle(cfg, &bundle)?;
     Ok(Some(bundle))
 }

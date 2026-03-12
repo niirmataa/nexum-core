@@ -29,9 +29,10 @@ use nxms_signer::{
 };
 use nxms_transport::admission::EscrowAdmissionArtifact;
 use nxms_transport::crypto::{decrypt, encrypt, suite_kem_id, suite_sig_id, Keys, SealedPacket};
+use nxms_transport::host_identity::HostIdentityBundle;
 use nxms_transport::host_vault::HostVault;
 use nxms_transport::peers::{Peer, PeerBook};
-use nxms_transport::trust::{RuntimeActionTokenIssuer, RuntimeTrustBundle, RuntimeTrustPeer};
+use nxms_transport::trust::{RuntimeActionTokenIssuer, RuntimeTrustBundle};
 use nxms_transport::wire::{
     msg_type_key, EscrowAction, EscrowBody, MsgType, NxmsEnvelope, NxmsPayload, TxSignReqBody,
     ESCROW_APP_PROTO_V1,
@@ -693,55 +694,48 @@ pub fn write_runtime_trust_bundle(
 ) -> Result<()> {
     let action_token_public_key = std::fs::read_to_string(action_token_public_key_path)
         .with_context(|| format!("read {}", action_token_public_key_path.display()))?;
-    let bundle = RuntimeTrustBundle {
-        schema: "nxms-runtime-trust-bundle/v1".to_string(),
-        trust_epoch: trust_epoch.to_string(),
-        peers: vec![
-            RuntimeTrustPeer {
-                id: local_id.to_string(),
-                role: "signer".to_string(),
-                host: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion"
-                    .to_string(),
-                port: 443,
-                kem_pk_b64: local_keys.kem_pk_b64.clone(),
-                sig_pk_b64: local_keys.sig_pk_b64.clone(),
-            },
-            RuntimeTrustPeer {
-                id: peer_id.to_string(),
-                role: "orchestrator".to_string(),
-                host: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion"
-                    .to_string(),
-                port: 443,
-                kem_pk_b64: peer_keys.kem_pk_b64.clone(),
-                sig_pk_b64: peer_keys.sig_pk_b64.clone(),
-            },
-            RuntimeTrustPeer {
-                id: "ag01".to_string(),
-                role: "ag-01".to_string(),
-                host: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccc.onion"
-                    .to_string(),
-                port: 443,
-                kem_pk_b64: ag01_keys.kem_pk_b64.clone(),
-                sig_pk_b64: ag01_keys.sig_pk_b64.clone(),
-            },
-            RuntimeTrustPeer {
-                id: "ag02".to_string(),
-                role: "ag-02".to_string(),
-                host: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddd.onion"
-                    .to_string(),
-                port: 443,
-                kem_pk_b64: ag02_keys.kem_pk_b64.clone(),
-                sig_pk_b64: ag02_keys.sig_pk_b64.clone(),
-            },
-        ],
-        action_token: RuntimeActionTokenIssuer {
+    let identities = vec![
+        HostIdentityBundle::from_local_keys(
+            local_id,
+            "signer",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion",
+            443,
+            local_keys,
+        )?,
+        HostIdentityBundle::from_local_keys(
+            peer_id,
+            "orchestrator",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.onion",
+            443,
+            peer_keys,
+        )?,
+        HostIdentityBundle::from_local_keys(
+            "ag01",
+            "ag-01",
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccc.onion",
+            443,
+            ag01_keys,
+        )?,
+        HostIdentityBundle::from_local_keys(
+            "ag02",
+            "ag-02",
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddd.onion",
+            443,
+            ag02_keys,
+        )?,
+    ];
+    let mut bundle = RuntimeTrustBundle::from_host_identities(
+        trust_epoch,
+        &identities,
+        RuntimeActionTokenIssuer {
             issuer: "nxms-auth".to_string(),
             algorithm: "EDDSA".to_string(),
             public_key_pem: action_token_public_key,
         },
-    };
-    std::fs::write(path, serde_json::to_vec_pretty(&bundle)?)
-        .with_context(|| format!("write runtime trust bundle {}", path.display()))?;
+    )?;
+    bundle.sign_with_local_keys("ag01", "ag-01", ag01_keys, 1)?;
+    bundle.sign_with_local_keys("ag02", "ag-02", ag02_keys, 2)?;
+    bundle.write_json(path)?;
     Ok(())
 }
 
