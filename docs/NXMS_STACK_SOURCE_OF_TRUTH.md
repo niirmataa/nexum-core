@@ -296,6 +296,8 @@ Po wydaniu `escrow_admission_artifact`:
 - `customer_identity_snapshot`: powstaje przy `open escrow`; jest zamrożonym przypięciem identity `buyer` i `seller` do konkretnego escrow.
 - `host vault`: powstaje lokalnie na hoście runtime; zawiera prywatne klucze hosta i nie jest dostarczany przez guardy ani orchestrator.
 - `HostIdentityBundle`: powstaje lokalnie z publicznej połowy `host vault`; jest jedynym artefaktem hosta przekazywanym do guardów przy bootstrapie.
+- `action token issuer vault`: powstaje lokalnie na hoście issuera runtime auth; zawiera prywatny klucz issuera i nie opuszcza hosta.
+- `ActionTokenIssuerBundle`: powstaje lokalnie z publicznej połowy `action token issuer vault`; jest jedynym artefaktem issuera przekazywanym do `AG-01 + AG-02` przy składaniu trust bundle.
 - `runtime_trust_bundle`: powstaje z publicznych bundli hostów i jest podpisywany przez `AG-01 + AG-02`; jest jedynym source of truth dla aktywnego trustu runtime.
 - `peers.json`: powstaje lokalnie jako projekcja `runtime_trust_bundle`; jest używany przez `nxms-transport`, ale nie jest samodzielnym trust rootem.
 - `action_token_pub.pem`: powstaje lokalnie jako projekcja `runtime_trust_bundle`; wskazuje aktywny publiczny klucz issuera runtime auth.

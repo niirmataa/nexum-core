@@ -1,17 +1,21 @@
 mod support;
 
+use std::sync::Arc;
+
 use anyhow::{anyhow, Result};
 use nxms_escrow_orchestrator::{
     build_issue_params, flow::WorkflowState, issue_action_token, ActionTokenCliInput,
     ActionTokenOp, ActionTokenRole, OrchestratorDb,
 };
 use nxms_signer::action_token::sign_req_id;
+use nxms_signer::SignerAgent;
+use nxms_transport::ActionTokenIssuerVault;
 use nxms_transport::wire::{EscrowAction, EscrowBody, TxSignRespBody};
 use tempfile::TempDir;
 
 use support::{
-    policy_hash_hex, stop_agent_task, txset_sha256_hex, write_action_token_private_key_pem,
-    WorkspaceSignerHarness,
+    WorkspaceSignerHarness, generate_action_token_issuer_vault, policy_hash_hex,
+    stop_agent_task, txset_sha256_hex,
 };
 
 async fn transition_workflow_to_funded(db: &OrchestratorDb, escrow_id_hex: &str) -> Result<()> {
@@ -41,10 +45,23 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
 
     let orchestrator_tempdir = TempDir::new()?;
     let orchestrator_db_path = orchestrator_tempdir.path().join("orchestrator.db");
-    let orchestrator_key_path = orchestrator_tempdir
-        .path()
-        .join("orch_action_token_ed25519.pem");
-    write_action_token_private_key_pem(&orchestrator_key_path)?;
+    let (orchestrator_issuer_vault_dir, orchestrator_issuer_passphrase_file) =
+        generate_action_token_issuer_vault(orchestrator_tempdir.path())?;
+    let orchestrator_public_key = ActionTokenIssuerVault::load(
+        &orchestrator_issuer_vault_dir,
+        "correct horse battery",
+    )?
+    .bundle()?
+    .public_key_pem;
+    std::fs::write(
+        &harness
+            .cfg
+            .action_token
+            .as_ref()
+            .expect("action token config")
+            .public_key_pem_path,
+        orchestrator_public_key.as_bytes(),
+    )?;
 
     let orchestrator_db = OrchestratorDb::new(orchestrator_db_path.clone());
     orchestrator_db.init().await?;
@@ -64,22 +81,33 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
         .upsert_proposal_blob(escrow_id_hex, "release", "aa11", &txset_hash_hex)
         .await?;
 
-    let agent_task = harness.spawn_agent();
+    let agent = Arc::new(SignerAgent::from_config(harness.cfg.clone()).await?);
+    let run_agent = Arc::clone(&agent);
+    let agent_task = tokio::spawn(async move { run_agent.run().await });
     harness
         .push_sign_request(escrow_id_hex, &snapshot_hash, 1)
         .await?;
 
     let pending_id = harness.wait_for_pending_id().await?;
-    let sign_jti = "jti-root-e2e-orchestrated-sign";
-    let sign_token = harness.build_sign_action_token(
-        escrow_id_hex,
-        &snapshot_hash_for_token,
-        &txset_hash_hex,
-        sign_jti,
-    )?;
-    harness
-        .agent
-        .approve_pending(pending_id, Some(&sign_token))
+    let issue_sign_params = build_issue_params(ActionTokenCliInput {
+        escrow_id_hex: escrow_id_hex.to_string(),
+        txset_hash_hex: txset_hash_hex.clone(),
+        role: ActionTokenRole::Arbiter,
+        op: ActionTokenOp::SignMultisig,
+        runtime_trust_bundle_path: None,
+        issuer_vault_dir: Some(orchestrator_issuer_vault_dir.clone()),
+        issuer_vault_passphrase_file: Some(orchestrator_issuer_passphrase_file.clone()),
+        ttl_secs: 60,
+        subject: Some("arbiter_operator".to_string()),
+        wallet_id: Some(harness.cfg.wallet_id.clone()),
+        sandbox_id: Some(harness.cfg.sandbox_id.clone()),
+        audience: Some(format!("sandbox:{}", harness.cfg.sandbox_id)),
+        nettype: Some(harness.cfg.nettype.clone()),
+    })?;
+    let issued_sign = issue_action_token(&orchestrator_db, &issue_sign_params).await?;
+    let sign_jti = issued_sign.claims.jti.clone();
+    agent
+        .approve_pending(pending_id, Some(&issued_sign.token))
         .await?;
 
     let peer_client = harness.peer_client()?;
@@ -125,7 +153,7 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
             "arbiter",
             "arbiter_first",
             &txset_hash_hex,
-            sign_jti,
+            &sign_jti,
             &arbiter_req_id,
         )
         .await?;
@@ -161,9 +189,8 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
         role: ActionTokenRole::Arbiter,
         op: ActionTokenOp::SubmitMultisig,
         runtime_trust_bundle_path: None,
-        issuer: Some("nxms-auth".to_string()),
-        algorithm: "EDDSA".to_string(),
-        private_key_pem_path: Some(orchestrator_key_path),
+        issuer_vault_dir: Some(orchestrator_issuer_vault_dir),
+        issuer_vault_passphrase_file: Some(orchestrator_issuer_passphrase_file),
         ttl_secs: 60,
         subject: Some("arbiter_operator".to_string()),
         wallet_id: Some(harness.cfg.wallet_id.clone()),
@@ -174,11 +201,13 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
     let issued = issue_action_token(&orchestrator_db, &issue_params).await?;
     assert_eq!(issued.claims.op, "submit_multisig");
     assert_eq!(issued.claims.snapshot_hash, snapshot_hash_for_token);
-    assert_eq!(issued.claims.proof_arbiter_jti.as_deref(), Some(sign_jti));
+    assert_eq!(
+        issued.claims.proof_arbiter_jti.as_deref(),
+        Some(sign_jti.as_str())
+    );
     assert_eq!(issued.claims.proof_seller_jti.as_deref(), Some(seller_jti));
 
-    let submitted = harness
-        .agent
+    let submitted = agent
         .submit_multisig_flow(
             escrow_id_hex,
             EscrowAction::Release,

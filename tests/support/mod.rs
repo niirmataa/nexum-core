@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -30,6 +30,7 @@ use nxms_signer::{
 use nxms_transport::admission::EscrowAdmissionArtifact;
 use nxms_transport::crypto::{decrypt, encrypt, suite_kem_id, suite_sig_id, Keys, SealedPacket};
 use nxms_transport::host_identity::HostIdentityBundle;
+use nxms_transport::ActionTokenIssuerVault;
 use nxms_transport::host_vault::HostVault;
 use nxms_transport::peers::{Peer, PeerBook};
 use nxms_transport::trust::{RuntimeActionTokenIssuer, RuntimeTrustBundle};
@@ -494,9 +495,13 @@ pub fn policy_hash_hex(snapshot: &ContractSnapshot) -> Result<String> {
     canonical_policy_hash_sha256_hex(snapshot)
 }
 
-pub fn write_action_token_private_key_pem(path: &Path) -> Result<()> {
-    std::fs::write(path, ED25519_PRIVATE_PEM)
-        .with_context(|| format!("write private key {}", path.display()))?;
+pub fn write_owner_only_secret_file(path: &Path, value: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("mkdir -p {}", parent.display()))?;
+    }
+    std::fs::write(path, format!("{value}\n"))
+        .with_context(|| format!("write secret {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -504,6 +509,15 @@ pub fn write_action_token_private_key_pem(path: &Path) -> Result<()> {
             .with_context(|| format!("chmod 600 {}", path.display()))?;
     }
     Ok(())
+}
+
+pub fn generate_action_token_issuer_vault(root: &Path) -> Result<(PathBuf, PathBuf)> {
+    let passphrase_file = root.join("run/action_token_issuer.passphrase");
+    let vault_dir = root.join("action-token-issuer-vault");
+    write_owner_only_secret_file(&passphrase_file, "correct horse battery")?;
+    ActionTokenIssuerVault::generate(&vault_dir, "correct horse battery", "nxms-auth", "EDDSA")
+        .with_context(|| format!("generate action token issuer vault {}", vault_dir.display()))?;
+    Ok((vault_dir, passphrase_file))
 }
 
 async fn wallet_rpc_handler(

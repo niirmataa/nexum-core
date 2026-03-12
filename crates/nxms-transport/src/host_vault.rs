@@ -14,6 +14,8 @@ const HOST_VAULT_SALT_LEN: usize = 16;
 const HOST_VAULT_NONCE_LEN: usize = 24;
 const HOST_VAULT_KEY_LEN: usize = 32;
 const HOST_VAULT_MAX_CT_LEN: usize = 16 * 1024 * 1024;
+const HOST_VAULT_AEAD_TAG_LEN: usize = 16;
+const HOST_VAULT_KDF_POLICY_MULTIPLIER: usize = 8;
 const CRYPTO_PWHASH_ALG_ARGON2ID13: c_int = 2;
 
 unsafe extern "C" {
@@ -94,6 +96,7 @@ impl HostVault {
         let blob = read_secret_file(&path)
             .with_context(|| format!("failed to read host vault {}", path.display()))?;
         let header = VaultHeader::parse(&blob)?;
+        let aad = &blob[..HOST_VAULT_HEADER_LEN];
         let ct = &blob[HOST_VAULT_HEADER_LEN..];
         let mut key = Zeroizing::new(derive_key(
             passphrase,
@@ -110,8 +113,8 @@ impl HostVault {
                 std::ptr::null_mut(),
                 ct.as_ptr(),
                 ct.len() as c_ulonglong,
-                std::ptr::null(),
-                0,
+                aad.as_ptr(),
+                aad.len() as c_ulonglong,
                 header.nonce.as_ptr(),
                 key.as_ptr(),
             )
@@ -169,6 +172,9 @@ impl HostVault {
             header.memlimit,
         )?);
         let mut ciphertext = Zeroizing::new(vec![0u8; plaintext.len() + 16]);
+        header.ct_len = plaintext.len() + HOST_VAULT_AEAD_TAG_LEN;
+        let mut aad = Vec::with_capacity(HOST_VAULT_HEADER_LEN);
+        header.write_into(&mut aad);
         let mut ct_len: c_ulonglong = 0;
         let rc = unsafe {
             crypto_aead_xchacha20poly1305_ietf_encrypt(
@@ -176,8 +182,8 @@ impl HostVault {
                 &mut ct_len,
                 plaintext.as_ptr(),
                 plaintext.len() as c_ulonglong,
-                std::ptr::null(),
-                0,
+                aad.as_ptr(),
+                aad.len() as c_ulonglong,
                 std::ptr::null(),
                 header.nonce.as_ptr(),
                 key.as_ptr(),
@@ -187,10 +193,9 @@ impl HostVault {
             return Err(anyhow!("host vault encrypt failed"));
         }
         ciphertext.truncate(ct_len as usize);
-        header.ct_len = ciphertext.len();
 
         let mut blob = Zeroizing::new(Vec::with_capacity(HOST_VAULT_HEADER_LEN + ciphertext.len()));
-        header.write_into(&mut blob);
+        blob.extend_from_slice(&aad);
         blob.extend_from_slice(ciphertext.as_slice());
         write_secret_file(&vault_bin_path(dir), blob.as_slice()).with_context(|| {
             format!(
@@ -332,6 +337,7 @@ impl VaultHeader {
         let opslimit = c_ulonglong::from_le_bytes(blob[20..28].try_into().expect("slice len"));
         let memlimit_raw = u64::from_le_bytes(blob[28..36].try_into().expect("slice len"));
         let memlimit = usize::try_from(memlimit_raw).map_err(|_| anyhow!("host vault memlimit overflow"))?;
+        validate_kdf_policy(opslimit, memlimit)?;
         let mut nonce = [0u8; HOST_VAULT_NONCE_LEN];
         nonce.copy_from_slice(&blob[36..60]);
         let ct_len_raw = u32::from_le_bytes(blob[60..64].try_into().expect("slice len"));
@@ -363,6 +369,28 @@ impl VaultHeader {
         out.extend_from_slice(&self.nonce);
         out.extend_from_slice(&(self.ct_len as u32).to_le_bytes());
     }
+}
+
+fn validate_kdf_policy(opslimit: c_ulonglong, memlimit: usize) -> Result<()> {
+    let baseline_opslimit = unsafe { crypto_pwhash_opslimit_interactive() };
+    let baseline_memlimit = unsafe { crypto_pwhash_memlimit_interactive() };
+    let max_opslimit = baseline_opslimit.saturating_mul(HOST_VAULT_KDF_POLICY_MULTIPLIER as u64);
+    let max_memlimit = baseline_memlimit.saturating_mul(HOST_VAULT_KDF_POLICY_MULTIPLIER);
+    if opslimit == 0 || opslimit > max_opslimit {
+        bail!(
+            "host vault opslimit {} exceeds policy max {}",
+            opslimit,
+            max_opslimit
+        );
+    }
+    if memlimit == 0 || memlimit > max_memlimit {
+        bail!(
+            "host vault memlimit {} exceeds policy max {}",
+            memlimit,
+            max_memlimit
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -414,6 +442,31 @@ mod tests {
             .expect_err("wrong passphrase should fail");
         assert!(err.to_string().contains("decrypt failed"));
         let _ = std::fs::remove_file(vault_bin_path(&dir));
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn host_vault_rejects_memlimit_above_policy_cap() {
+        let dir = std::env::temp_dir().join(format!(
+            "nxms_host_vault_memlimit_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        HostVault::generate(&dir, "correct horse battery", "signer-a").expect("generate");
+        let path = vault_bin_path(&dir);
+        let mut blob = std::fs::read(&path).expect("read vault");
+        let baseline_memlimit = unsafe { crypto_pwhash_memlimit_interactive() };
+        let oversized = baseline_memlimit
+            .saturating_mul(HOST_VAULT_KDF_POLICY_MULTIPLIER + 1) as u64;
+        blob[28..36].copy_from_slice(&oversized.to_le_bytes());
+        std::fs::write(&path, blob).expect("write tampered vault");
+        let err =
+            HostVault::load(&dir, "correct horse battery").expect_err("oversized memlimit must fail");
+        assert!(err.to_string().contains("memlimit"));
+        let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_dir(&dir);
     }
 }

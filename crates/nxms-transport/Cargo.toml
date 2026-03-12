@@ -11,6 +11,7 @@ anyhow = "1"
 base64 = { version = "0.22", optional = true }
 hex = "0.4"
 libc = { version = "0.2", optional = true }
+ring = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -20,8 +21,11 @@ zeroize = { version = "1", optional = true }
 
 [features]
 default = ["crypto"]
-crypto = ["dep:base64", "dep:libc", "dep:zeroize"]
+crypto = ["dep:base64", "dep:libc", "dep:ring", "dep:zeroize"]
 security = ["dep:zeroize"]
 
 [build-dependencies]
 cc = "1"
+
+[dev-dependencies]
+jsonwebtoken.workspace = true

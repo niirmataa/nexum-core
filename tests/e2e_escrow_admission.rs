@@ -1,6 +1,7 @@
 mod support;
 
 use std::sync::Arc;
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -11,15 +12,18 @@ use nxms_escrow_orchestrator::{
 use nxms_signer::trust::materialize_runtime_trust_from_config;
 use nxms_signer::{SignerAgent, SignerConfig};
 use nxms_transport::admission::EscrowAdmissionArtifact;
+use nxms_transport::ActionTokenIssuerVault;
 use nxms_transport::wire::{EscrowAction, EscrowBody, TxSignRespBody};
 use tempfile::TempDir;
 
 use support::{
-    WorkspaceSignerHarness, policy_hash_hex, stop_agent_task, txset_sha256_hex,
-    write_action_token_private_key_pem, write_runtime_trust_bundle,
+    WorkspaceSignerHarness, generate_action_token_issuer_vault, policy_hash_hex,
+    stop_agent_task, txset_sha256_hex, write_runtime_trust_bundle,
 };
 
-async fn setup_runtime_trust_agent() -> Result<(WorkspaceSignerHarness, SignerConfig, String)> {
+async fn setup_runtime_trust_agent_with_action_key(
+    action_pub_path: &Path,
+) -> Result<(WorkspaceSignerHarness, SignerConfig, String)> {
     let harness = WorkspaceSignerHarness::setup().await?;
     let trust_epoch = "epoch-2026-03-12-admission".to_string();
     let bundle_path = harness
@@ -28,6 +32,34 @@ async fn setup_runtime_trust_agent() -> Result<(WorkspaceSignerHarness, SignerCo
         .parent()
         .expect("db path parent")
         .join("runtime-trust-bundle.json");
+    write_runtime_trust_bundle(
+        &bundle_path,
+        &harness.cfg.local_id,
+        &harness.local_keys,
+        "peer1",
+        &harness.peer_keys,
+        &harness.ag01_keys,
+        &harness.ag02_keys,
+        action_pub_path,
+        &trust_epoch,
+    )?;
+
+    let mut cfg = harness.cfg.clone();
+    cfg.runtime_trust_bundle_path = Some(bundle_path);
+    let _ = std::fs::remove_file(&cfg.peers_path);
+    let _ = std::fs::remove_file(
+        &cfg.action_token
+            .as_ref()
+            .expect("action token config")
+            .public_key_pem_path,
+    );
+    materialize_runtime_trust_from_config(&cfg)?;
+
+    Ok((harness, cfg, trust_epoch))
+}
+
+async fn setup_runtime_trust_agent() -> Result<(WorkspaceSignerHarness, SignerConfig, String)> {
+    let harness = WorkspaceSignerHarness::setup().await?;
     let action_pub_path = harness
         .cfg
         .action_token
@@ -35,6 +67,13 @@ async fn setup_runtime_trust_agent() -> Result<(WorkspaceSignerHarness, SignerCo
         .expect("action token config")
         .public_key_pem_path
         .clone();
+    let trust_epoch = "epoch-2026-03-12-admission".to_string();
+    let bundle_path = harness
+        .cfg
+        .db_path
+        .parent()
+        .expect("db path parent")
+        .join("runtime-trust-bundle.json");
     write_runtime_trust_bundle(
         &bundle_path,
         &harness.cfg.local_id,
@@ -95,7 +134,22 @@ fn admission_row(artifact: &EscrowAdmissionArtifact) -> Result<EscrowAdmissionAr
 
 #[tokio::test]
 async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result<()> {
-    let (harness, cfg, trust_epoch) = setup_runtime_trust_agent().await?;
+    let orchestrator_tempdir = TempDir::new()?;
+    let (orchestrator_issuer_vault_dir, orchestrator_issuer_passphrase_file) =
+        generate_action_token_issuer_vault(orchestrator_tempdir.path())?;
+    let orchestrator_public_key_path = orchestrator_tempdir
+        .path()
+        .join("orch_action_token_ed25519.pub.pem");
+    let orchestrator_public_key = ActionTokenIssuerVault::load(
+        &orchestrator_issuer_vault_dir,
+        "correct horse battery",
+    )?
+    .bundle()?
+    .public_key_pem;
+    std::fs::write(&orchestrator_public_key_path, orchestrator_public_key.as_bytes())?;
+
+    let (harness, cfg, trust_epoch) =
+        setup_runtime_trust_agent_with_action_key(&orchestrator_public_key_path).await?;
     let bundle_path = cfg
         .runtime_trust_bundle_path
         .clone()
@@ -104,6 +158,7 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
     let run_agent = Arc::clone(&agent);
     let agent_task = tokio::spawn(async move { run_agent.run().await });
 
+    let orchestrator_db_path = orchestrator_tempdir.path().join("orchestrator.db");
     let escrow_id_hex = "00112233445566778899aabbccddeeff";
     let txset_hash_hex = txset_sha256_hex("aa11")?;
     let snapshot = harness.seed_active_snapshot(escrow_id_hex).await?;
@@ -117,12 +172,6 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
     )?;
     let admission_hash = admission.hash_hex()?;
 
-    let orchestrator_tempdir = TempDir::new()?;
-    let orchestrator_db_path = orchestrator_tempdir.path().join("orchestrator.db");
-    let orchestrator_key_path = orchestrator_tempdir
-        .path()
-        .join("orch_action_token_ed25519.pem");
-    write_action_token_private_key_pem(&orchestrator_key_path)?;
 
     let orchestrator_db = OrchestratorDb::new(orchestrator_db_path);
     orchestrator_db.init().await?;
@@ -156,9 +205,8 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
         role: ActionTokenRole::Arbiter,
         op: ActionTokenOp::SignMultisig,
         runtime_trust_bundle_path: Some(bundle_path.clone()),
-        issuer: Some("nxms-auth".to_string()),
-        algorithm: "EDDSA".to_string(),
-        private_key_pem_path: Some(orchestrator_key_path.clone()),
+        issuer_vault_dir: Some(orchestrator_issuer_vault_dir.clone()),
+        issuer_vault_passphrase_file: Some(orchestrator_issuer_passphrase_file.clone()),
         ttl_secs: 60,
         subject: Some("arbiter_operator".to_string()),
         wallet_id: Some(harness.cfg.wallet_id.clone()),
@@ -247,9 +295,8 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
         role: ActionTokenRole::Arbiter,
         op: ActionTokenOp::SubmitMultisig,
         runtime_trust_bundle_path: Some(bundle_path),
-        issuer: Some("nxms-auth".to_string()),
-        algorithm: "EDDSA".to_string(),
-        private_key_pem_path: Some(orchestrator_key_path),
+        issuer_vault_dir: Some(orchestrator_issuer_vault_dir),
+        issuer_vault_passphrase_file: Some(orchestrator_issuer_passphrase_file),
         ttl_secs: 60,
         subject: Some("arbiter_operator".to_string()),
         wallet_id: Some(harness.cfg.wallet_id.clone()),

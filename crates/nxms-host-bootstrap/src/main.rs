@@ -1,9 +1,10 @@
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use nxms_transport::bootstrap::{
-    export_host_identity, generate_local_host_vault, init_runtime_trust_bundle,
-    materialize_runtime_trust_for_local, now_ms, sign_runtime_trust_bundle,
-    verify_runtime_trust_bundle, verify_runtime_trust_projection_for_local,
+    export_action_token_issuer, export_host_identity, generate_action_token_issuer_vault,
+    generate_local_host_vault, init_runtime_trust_bundle, materialize_runtime_trust_for_local,
+    now_ms, sign_runtime_trust_bundle, verify_runtime_trust_bundle,
+    verify_runtime_trust_projection_for_local,
 };
 use nxms_transport::crypto::{suite_kem_id, suite_sig_id};
 use serde_json::to_string_pretty;
@@ -20,7 +21,9 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     GenerateHostVault(GenerateHostVaultArgs),
+    GenerateActionTokenIssuerVault(GenerateActionTokenIssuerVaultArgs),
     ExportHostIdentity(ExportHostIdentityArgs),
+    ExportActionTokenIssuer(ExportActionTokenIssuerArgs),
     InitBundle(InitBundleArgs),
     SignBundle(SignBundleArgs),
     VerifyBundle(VerifyBundleArgs),
@@ -65,6 +68,33 @@ struct ExportHostIdentityArgs {
 }
 
 #[derive(Debug, Args)]
+struct GenerateActionTokenIssuerVaultArgs {
+    #[arg(long)]
+    issuer: String,
+
+    #[arg(long)]
+    algorithm: String,
+
+    #[arg(long)]
+    action_token_issuer_vault_dir: PathBuf,
+
+    #[arg(long)]
+    action_token_issuer_vault_passphrase_file: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct ExportActionTokenIssuerArgs {
+    #[arg(long)]
+    action_token_issuer_vault_dir: PathBuf,
+
+    #[arg(long)]
+    action_token_issuer_vault_passphrase_file: PathBuf,
+
+    #[arg(long)]
+    out: PathBuf,
+}
+
+#[derive(Debug, Args)]
 struct InitBundleArgs {
     #[arg(long)]
     trust_epoch: String,
@@ -73,13 +103,7 @@ struct InitBundleArgs {
     host_identity: Vec<PathBuf>,
 
     #[arg(long)]
-    action_token_issuer: String,
-
-    #[arg(long)]
-    action_token_algorithm: String,
-
-    #[arg(long)]
-    action_token_public_key_pem_path: PathBuf,
+    action_token_issuer_bundle: PathBuf,
 
     #[arg(long)]
     out: PathBuf,
@@ -173,6 +197,17 @@ fn main() -> Result<()> {
             println!("pk_kem_b64: {}", keys.kem_pk_b64);
             println!("pk_sig_b64: {}", keys.sig_pk_b64);
         }
+        Command::GenerateActionTokenIssuerVault(args) => {
+            let bundle = generate_action_token_issuer_vault(
+                &args.issuer,
+                &args.algorithm,
+                &args.action_token_issuer_vault_dir,
+                &args.action_token_issuer_vault_passphrase_file,
+            )?;
+            println!("action_token_issuer_vault: {}", args.action_token_issuer_vault_dir.display());
+            println!("issuer: {}", bundle.issuer);
+            println!("algorithm: {}", bundle.algorithm);
+        }
         Command::ExportHostIdentity(args) => {
             let bundle = export_host_identity(
                 &args.local_id,
@@ -185,13 +220,19 @@ fn main() -> Result<()> {
             )?;
             println!("{}", to_string_pretty(&bundle)?);
         }
+        Command::ExportActionTokenIssuer(args) => {
+            let bundle = export_action_token_issuer(
+                &args.action_token_issuer_vault_dir,
+                &args.action_token_issuer_vault_passphrase_file,
+                &args.out,
+            )?;
+            println!("{}", to_string_pretty(&bundle)?);
+        }
         Command::InitBundle(args) => {
             let bundle = init_runtime_trust_bundle(
                 &args.trust_epoch,
                 &args.host_identity,
-                &args.action_token_issuer,
-                &args.action_token_algorithm,
-                &args.action_token_public_key_pem_path,
+                &args.action_token_issuer_bundle,
                 &args.out,
             )?;
             println!("{}", to_string_pretty(&bundle)?);

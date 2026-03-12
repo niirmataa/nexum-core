@@ -1,3 +1,5 @@
+use crate::action_token_issuer::ActionTokenIssuerBundle;
+use crate::action_token_issuer_vault::{self, ActionTokenIssuerVault};
 use crate::crypto::Keys;
 use crate::host_identity::HostIdentityBundle;
 use crate::host_vault::{self, HostVault, load_host_keys, vault_bin_path};
@@ -41,6 +43,57 @@ pub fn generate_local_host_vault_with_passphrase(
         .with_context(|| format!("failed to load generated host vault {}", vault_path.display()))
 }
 
+pub fn generate_action_token_issuer_vault(
+    issuer: &str,
+    algorithm: &str,
+    action_token_issuer_vault_dir: &Path,
+    action_token_issuer_vault_passphrase_file: &Path,
+) -> Result<ActionTokenIssuerBundle> {
+    let passphrase = read_owner_only_text(
+        action_token_issuer_vault_passphrase_file,
+        "action_token_issuer_vault_passphrase_file",
+    )?;
+    generate_action_token_issuer_vault_with_passphrase(
+        issuer,
+        algorithm,
+        action_token_issuer_vault_dir,
+        passphrase.as_str(),
+    )
+}
+
+pub fn generate_action_token_issuer_vault_with_passphrase(
+    issuer: &str,
+    algorithm: &str,
+    action_token_issuer_vault_dir: &Path,
+    action_token_issuer_vault_passphrase: &str,
+) -> Result<ActionTokenIssuerBundle> {
+    let vault_path = action_token_issuer_vault::vault_bin_path(action_token_issuer_vault_dir);
+    if vault_path.exists() {
+        bail!(
+            "action token issuer vault already exists at {}",
+            vault_path.display()
+        );
+    }
+    let vault = ActionTokenIssuerVault::generate(
+        action_token_issuer_vault_dir,
+        action_token_issuer_vault_passphrase,
+        issuer,
+        algorithm,
+    )
+    .with_context(|| {
+        format!(
+            "failed to generate action token issuer vault {}",
+            vault_path.display()
+        )
+    })?;
+    vault.bundle().with_context(|| {
+        format!(
+            "failed to load generated action token issuer vault {}",
+            vault_path.display()
+        )
+    })
+}
+
 pub fn export_host_identity(
     local_id: &str,
     role: &str,
@@ -82,12 +135,43 @@ pub fn export_host_identity_with_passphrase(
     Ok(bundle)
 }
 
+pub fn export_action_token_issuer(
+    action_token_issuer_vault_dir: &Path,
+    action_token_issuer_vault_passphrase_file: &Path,
+    out: &Path,
+) -> Result<ActionTokenIssuerBundle> {
+    let passphrase = read_owner_only_text(
+        action_token_issuer_vault_passphrase_file,
+        "action_token_issuer_vault_passphrase_file",
+    )?;
+    export_action_token_issuer_with_passphrase(
+        action_token_issuer_vault_dir,
+        passphrase.as_str(),
+        out,
+    )
+}
+
+pub fn export_action_token_issuer_with_passphrase(
+    action_token_issuer_vault_dir: &Path,
+    action_token_issuer_vault_passphrase: &str,
+    out: &Path,
+) -> Result<ActionTokenIssuerBundle> {
+    let vault =
+        ActionTokenIssuerVault::load(action_token_issuer_vault_dir, action_token_issuer_vault_passphrase)
+            .with_context(|| {
+                format!(
+                    "failed to load action token issuer vault {}",
+                    action_token_issuer_vault::vault_bin_path(action_token_issuer_vault_dir)
+                        .display()
+                )
+            })?;
+    vault.export_bundle(out)
+}
+
 pub fn init_runtime_trust_bundle(
     trust_epoch: &str,
     host_identity_paths: &[PathBuf],
-    action_token_issuer: &str,
-    action_token_algorithm: &str,
-    action_token_public_key_pem_path: &Path,
+    action_token_issuer_bundle_path: &Path,
     out: &Path,
 ) -> Result<RuntimeTrustBundle> {
     if host_identity_paths.is_empty() {
@@ -97,16 +181,14 @@ pub fn init_runtime_trust_bundle(
         .iter()
         .map(HostIdentityBundle::load)
         .collect::<Result<Vec<_>>>()?;
-    let public_key_pem = read_public_text(action_token_public_key_pem_path, "action_token_public_key_pem_path")?;
-    let issuer = normalize_non_empty(action_token_issuer, "action_token_issuer", 256)?;
-    let algorithm = normalize_action_token_algorithm(action_token_algorithm)?;
+    let action_token_issuer = ActionTokenIssuerBundle::load(action_token_issuer_bundle_path)?;
     let bundle = RuntimeTrustBundle::from_host_identities(
         trust_epoch,
         &identities,
         RuntimeActionTokenIssuer {
-            issuer,
-            algorithm,
-            public_key_pem,
+            issuer: action_token_issuer.issuer,
+            algorithm: action_token_issuer.algorithm,
+            public_key_pem: action_token_issuer.public_key_pem,
         },
     )?;
     bundle.write_json(out)?;
@@ -349,22 +431,6 @@ fn validate_public_file(path: &Path, metadata: &std::fs::Metadata, label: &str) 
     Ok(())
 }
 
-fn normalize_non_empty(value: &str, label: &str, max_len: usize) -> Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() || trimmed.len() > max_len {
-        bail!("{label} must be 1..={max_len} chars");
-    }
-    Ok(trimmed.to_string())
-}
-
-fn normalize_action_token_algorithm(value: &str) -> Result<String> {
-    let normalized = normalize_non_empty(value, "action_token_algorithm", 16)?.to_ascii_uppercase();
-    match normalized.as_str() {
-        "EDDSA" | "ES256" => Ok(normalized),
-        _ => bail!("action_token_algorithm must be EDDSA or ES256"),
-    }
-}
-
 fn normalize_text(value: &str) -> &str {
     value.trim_end_matches(['\r', '\n', ' ', '\t'])
 }
@@ -372,8 +438,6 @@ fn normalize_text(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const ED25519_PUBLIC_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAD7TxzeCSPJhJljqWs/fABRUaUBlTkJP8O1v31Z64F/I=\n-----END PUBLIC KEY-----\n";
 
     fn unique_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -394,15 +458,6 @@ mod tests {
         std::fs::write(path, format!("{value}\n")).expect("write");
         #[cfg(unix)]
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
-    }
-
-    fn write_public_pem(path: &Path) {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("mkdir");
-        }
-        std::fs::write(path, ED25519_PUBLIC_PEM).expect("write pem");
-        #[cfg(unix)]
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
     }
 
     #[test]
@@ -433,10 +488,16 @@ mod tests {
     #[test]
     fn bootstrap_init_sign_verify_and_materialize_runtime_trust_bundle() {
         let dir = unique_dir("signed_bundle");
-        let action_pem = dir.join("action_token_pub.pem");
+        let action_pass = dir.join("action/run/passphrase");
+        let action_vault = dir.join("action/vault");
+        let action_bundle = dir.join("action/action_token_issuer.pub.json");
         let signer_peers = dir.join("runtime/peers.json");
         let signer_action_pub = dir.join("runtime/action_token_pub.pem");
-        write_public_pem(&action_pem);
+        write_owner_only_secret(&action_pass, "correct horse battery");
+        generate_action_token_issuer_vault("nxms-auth", "EDDSA", &action_vault, &action_pass)
+            .expect("action issuer vault");
+        export_action_token_issuer(&action_vault, &action_pass, &action_bundle)
+            .expect("action issuer bundle");
 
         let signer_pass = dir.join("signer/run/passphrase");
         let signer_vault = dir.join("signer/host-vault");
@@ -508,9 +569,7 @@ mod tests {
         init_runtime_trust_bundle(
             "epoch-1",
             &[signer_bundle, orch_bundle, ag01_bundle, ag02_bundle],
-            "nxms-auth",
-            "EDDSA",
-            &action_pem,
+            &action_bundle,
             &unsigned,
         )
         .expect("init bundle");

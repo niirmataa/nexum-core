@@ -1,13 +1,12 @@
-use std::fs::OpenOptions;
-use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{Subcommand, ValueEnum};
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use nxms_transport::ActionTokenIssuerVault;
 use nxms_transport::trust::RuntimeTrustBundle;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -15,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::db::{OrchestratorDb, SubmitMultisigProofBundle};
 use crate::flow::WorkflowState;
 
-const ENV_ACTION_TOKEN_ISSUER: &str = "NXMS_ORCH_ACTION_TOKEN_ISSUER";
-const ENV_ACTION_TOKEN_ALGORITHM: &str = "NXMS_ORCH_ACTION_TOKEN_ALGORITHM";
-const ENV_ACTION_TOKEN_PRIVATE_KEY_PEM_PATH: &str = "NXMS_ORCH_ACTION_TOKEN_PRIVATE_KEY_PEM_PATH";
+const ENV_ACTION_TOKEN_ISSUER_VAULT_DIR: &str = "NXMS_ORCH_ACTION_TOKEN_ISSUER_VAULT_DIR";
+const ENV_ACTION_TOKEN_ISSUER_VAULT_PASSPHRASE_FILE: &str =
+    "NXMS_ORCH_ACTION_TOKEN_ISSUER_VAULT_PASSPHRASE_FILE";
 const ENV_ACTION_TOKEN_TTL_SECS: &str = "NXMS_ORCH_ACTION_TOKEN_TTL_SECS";
 
 #[derive(Subcommand, Debug)]
@@ -41,12 +40,10 @@ pub enum ActionTokenCommand {
         bridge_token: Option<String>,
         #[arg(long)]
         runtime_trust_bundle_path: Option<PathBuf>,
-        #[arg(long, env = ENV_ACTION_TOKEN_ISSUER)]
-        issuer: Option<String>,
-        #[arg(long, env = ENV_ACTION_TOKEN_ALGORITHM, default_value = "EDDSA")]
-        algorithm: String,
-        #[arg(long, env = ENV_ACTION_TOKEN_PRIVATE_KEY_PEM_PATH)]
-        private_key_pem_path: Option<PathBuf>,
+        #[arg(long, env = ENV_ACTION_TOKEN_ISSUER_VAULT_DIR)]
+        issuer_vault_dir: Option<PathBuf>,
+        #[arg(long, env = ENV_ACTION_TOKEN_ISSUER_VAULT_PASSPHRASE_FILE)]
+        issuer_vault_passphrase_file: Option<PathBuf>,
         #[arg(long, env = ENV_ACTION_TOKEN_TTL_SECS, default_value_t = 60)]
         ttl_secs: u64,
         #[arg(long)]
@@ -182,9 +179,8 @@ pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
             op,
             bridge_token,
             runtime_trust_bundle_path,
-            issuer,
-            algorithm,
-            private_key_pem_path,
+            issuer_vault_dir,
+            issuer_vault_passphrase_file,
             ttl_secs,
             subject,
             wallet_id,
@@ -199,9 +195,8 @@ pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
                 role,
                 op,
                 runtime_trust_bundle_path,
-                issuer,
-                algorithm,
-                private_key_pem_path,
+                issuer_vault_dir,
+                issuer_vault_passphrase_file,
                 ttl_secs,
                 subject,
                 wallet_id,
@@ -225,9 +220,8 @@ pub struct ActionTokenCliInput {
     pub role: ActionTokenRole,
     pub op: ActionTokenOp,
     pub runtime_trust_bundle_path: Option<PathBuf>,
-    pub issuer: Option<String>,
-    pub algorithm: String,
-    pub private_key_pem_path: Option<PathBuf>,
+    pub issuer_vault_dir: Option<PathBuf>,
+    pub issuer_vault_passphrase_file: Option<PathBuf>,
     pub ttl_secs: u64,
     pub subject: Option<String>,
     pub wallet_id: Option<String>,
@@ -244,12 +238,13 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
         .transpose()?;
     let escrow_id_hex = normalize_hex_exact(&input.escrow_id_hex, 32, "escrow_id_hex")?;
     let txset_hash_hex = normalize_hex_exact(&input.txset_hash_hex, 64, "txset_hash_hex")?;
-    let issuer = normalize_non_empty(
-        resolve_required_with_env(input.issuer, ENV_ACTION_TOKEN_ISSUER, "issuer")?,
-        "issuer",
-        256,
+    let issuer_vault = load_action_token_issuer_vault(
+        input.issuer_vault_dir,
+        input.issuer_vault_passphrase_file,
     )?;
-    let algorithm = parse_algorithm(&input.algorithm)?;
+    let issuer_bundle = issuer_vault.bundle()?;
+    let issuer = issuer_bundle.issuer.clone();
+    let algorithm = parse_algorithm(&issuer_bundle.algorithm)?;
     if let Some(bundle) = &runtime_trust_bundle {
         if issuer != bundle.action_token.issuer {
             bail!(
@@ -265,24 +260,15 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
                 bundle.action_token.algorithm
             );
         }
+        if normalize_text(&issuer_bundle.public_key_pem)
+            != normalize_text(bundle.action_token_public_key_pem())
+        {
+            bail!("action token issuer public key does not match runtime trust bundle");
+        }
     }
-    let private_key_pem_path = input.private_key_pem_path.or_else(|| {
-        std::env::var(ENV_ACTION_TOKEN_PRIVATE_KEY_PEM_PATH)
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    });
-    let private_key_pem_path = private_key_pem_path.ok_or_else(|| {
-        anyhow!(
-            "missing private_key_pem_path (or {})",
-            ENV_ACTION_TOKEN_PRIVATE_KEY_PEM_PATH
-        )
-    })?;
-    let pem = read_private_key_pem_checked(&private_key_pem_path)?;
     let encoding_key = match algorithm {
-        Algorithm::EdDSA => EncodingKey::from_ed_pem(&pem)?,
-        Algorithm::ES256 => EncodingKey::from_ec_pem(&pem)?,
+        Algorithm::EdDSA => EncodingKey::from_ed_pem(issuer_vault.private_key_pem().as_bytes())?,
+        Algorithm::ES256 => EncodingKey::from_ec_pem(issuer_vault.private_key_pem().as_bytes())?,
         _ => bail!("unsupported JWT algorithm for action token issuer"),
     };
     if input.ttl_secs == 0 {
@@ -513,21 +499,6 @@ fn algorithm_name(algorithm: Algorithm) -> String {
     }
 }
 
-fn resolve_required_with_env(
-    cli_value: Option<String>,
-    env_name: &str,
-    label: &str,
-) -> Result<String> {
-    if let Some(v) = cli_value {
-        return Ok(v);
-    }
-    std::env::var(env_name)
-        .ok()
-        .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| anyhow!("missing {} (or {})", label, env_name))
-}
-
 fn resolve_role_required(
     cli_value: Option<String>,
     role: ActionTokenRole,
@@ -577,6 +548,10 @@ fn normalize_non_empty(value: String, label: &str, max_len: usize) -> Result<Str
     Ok(trimmed.to_string())
 }
 
+fn normalize_text(value: &str) -> &str {
+    value.trim_end_matches(['\r', '\n', ' ', '\t'])
+}
+
 fn normalize_hex_exact(value: &str, expected_len: usize, label: &str) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.len() != expected_len || !trimmed.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -608,84 +583,104 @@ fn now_s() -> Result<u64> {
         .as_secs())
 }
 
-fn validate_private_key_pem_metadata(path: &Path, metadata: &std::fs::Metadata) -> Result<()> {
-    if !metadata.is_file() {
-        bail!(
-            "action token private key path is not a regular file: {}",
-            path.display()
-        );
-    }
-    #[cfg(unix)]
+fn load_action_token_issuer_vault(
+    issuer_vault_dir: Option<PathBuf>,
+    issuer_vault_passphrase_file: Option<PathBuf>,
+) -> Result<ActionTokenIssuerVault> {
+    let issuer_vault_dir = resolve_required_path_with_env(
+        issuer_vault_dir,
+        ENV_ACTION_TOKEN_ISSUER_VAULT_DIR,
+        "issuer_vault_dir",
+    )?;
+    let issuer_vault_passphrase_file = resolve_required_path_with_env(
+        issuer_vault_passphrase_file,
+        ENV_ACTION_TOKEN_ISSUER_VAULT_PASSPHRASE_FILE,
+        "issuer_vault_passphrase_file",
+    )?;
+    let passphrase = read_owner_only_text(
+        &issuer_vault_passphrase_file,
+        "issuer_vault_passphrase_file",
+    )?;
+    ActionTokenIssuerVault::load(&issuer_vault_dir, passphrase.as_str()).with_context(|| {
+        format!(
+            "failed to load action token issuer vault {}",
+            issuer_vault_dir.display()
+        )
+    })
+}
+
+fn resolve_required_path_with_env(
+    cli_value: Option<PathBuf>,
+    env_name: &str,
+    label: &str,
+) -> Result<PathBuf> {
+    if let Some(path) = cli_value
+        && !path.as_os_str().is_empty()
     {
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode & 0o077 != 0 {
-            bail!(
-                "action token private key has unsafe permissions (mode {:03o}); require owner-only permissions (e.g. 600)",
-                mode
-            );
-        }
+        return Ok(path);
+    }
+    std::env::var(env_name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("missing {} (or {})", label, env_name))
+}
+
+#[cfg(unix)]
+fn read_owner_only_text(path: &Path, label: &str) -> Result<String> {
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| anyhow!("{label} failed to open '{}': {}", path.display(), e))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| anyhow!("{label} failed to stat '{}': {}", path.display(), e))?;
+    validate_owner_only_file(path, &metadata, label)?;
+    let mut raw = String::new();
+    use std::io::Read as _;
+    file.read_to_string(&mut raw)
+        .map_err(|e| anyhow!("{label} failed to read '{}': {}", path.display(), e))?;
+    let out = raw.trim().to_string();
+    if out.is_empty() {
+        return Err(anyhow!("{label} '{}' is empty", path.display()));
+    }
+    Ok(out)
+}
+
+#[cfg(not(unix))]
+fn read_owner_only_text(path: &Path, label: &str) -> Result<String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| anyhow!("{label} failed to read '{}': {}", path.display(), e))?;
+    let out = raw.trim().to_string();
+    if out.is_empty() {
+        return Err(anyhow!("{label} '{}' is empty", path.display()));
+    }
+    Ok(out)
+}
+
+#[cfg(unix)]
+fn validate_owner_only_file(path: &Path, metadata: &std::fs::Metadata, label: &str) -> Result<()> {
+    if !metadata.is_file() {
+        bail!("{label} is not a regular file: {}", path.display());
+    }
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        bail!(
+            "{label} has unsafe permissions (mode {:03o}); require owner-only permissions (e.g. 600)",
+            mode
+        );
     }
     Ok(())
 }
 
-#[cfg(unix)]
-fn read_private_key_pem_checked(path: &Path) -> Result<Vec<u8>> {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-        .map_err(|e| {
-            anyhow!(
-                "failed to open action token private key {}: {}",
-                path.display(),
-                e
-            )
-        })?;
-    let metadata = file.metadata().map_err(|e| {
-        anyhow!(
-            "failed to stat opened action token private key {}: {}",
-            path.display(),
-            e
-        )
-    })?;
-    validate_private_key_pem_metadata(path, &metadata)?;
-    let mut pem = Vec::new();
-    file.read_to_end(&mut pem).map_err(|e| {
-        anyhow!(
-            "failed to read action token private key {}: {}",
-            path.display(),
-            e
-        )
-    })?;
-    Ok(pem)
-}
-
 #[cfg(not(unix))]
-fn read_private_key_pem_checked(path: &Path) -> Result<Vec<u8>> {
-    let mut file = OpenOptions::new().read(true).open(path).map_err(|e| {
-        anyhow!(
-            "failed to open action token private key {}: {}",
-            path.display(),
-            e
-        )
-    })?;
-    let metadata = file.metadata().map_err(|e| {
-        anyhow!(
-            "failed to stat opened action token private key {}: {}",
-            path.display(),
-            e
-        )
-    })?;
-    validate_private_key_pem_metadata(path, &metadata)?;
-    let mut pem = Vec::new();
-    file.read_to_end(&mut pem).map_err(|e| {
-        anyhow!(
-            "failed to read action token private key {}: {}",
-            path.display(),
-            e
-        )
-    })?;
-    Ok(pem)
+fn validate_owner_only_file(_path: &Path, metadata: &std::fs::Metadata, label: &str) -> Result<()> {
+    if !metadata.is_file() {
+        bail!("{label} is not a regular file");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -694,12 +689,10 @@ mod tests {
     use crate::db::OrchestratorDb;
     use crate::flow::WorkflowState;
     use jsonwebtoken::{DecodingKey, Validation, decode};
+    use nxms_transport::ActionTokenIssuerVault;
     #[cfg(unix)]
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    const ED25519_PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJCBxRIEv7DU1o/rRG+beqeRLVa2kL9RAArTq6vRp7D0\n-----END PRIVATE KEY-----\n";
-    const ED25519_PUBLIC_PEM: &str = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAD7TxzeCSPJhJljqWs/fABRUaUBlTkJP8O1v31Z64F/I=\n-----END PUBLIC KEY-----\n";
 
     fn unique_path(prefix: &str, suffix: &str) -> PathBuf {
         let ts = SystemTime::now()
@@ -715,22 +708,60 @@ mod tests {
         ))
     }
 
+    fn unique_dir(prefix: &str) -> PathBuf {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "nxms_orch_action_token_{}_{}_{}",
+            prefix,
+            std::process::id(),
+            ts
+        ))
+    }
+
+    fn write_owner_only_secret(path: &Path, value: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("mkdir");
+        }
+        std::fs::write(path, format!("{value}\n")).expect("write");
+        #[cfg(unix)]
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    }
+
+    fn generate_issuer_vault(label: &str) -> (PathBuf, PathBuf, ActionTokenIssuerVault) {
+        let dir = unique_dir(label);
+        let pass_path = dir.join("run/passphrase");
+        let vault_dir = dir.join("vault");
+        write_owner_only_secret(&pass_path, "correct horse battery");
+        let vault =
+            ActionTokenIssuerVault::generate(&vault_dir, "correct horse battery", "nxms-auth", "EDDSA")
+                .expect("generate issuer vault");
+        (vault_dir, pass_path, vault)
+    }
+
     fn test_issue_params(
-        private_key_pem_path: PathBuf,
+        issuer_vault_dir: PathBuf,
+        issuer_vault_passphrase_file: PathBuf,
         role: ActionTokenRole,
         op: ActionTokenOp,
         escrow_id_hex: &str,
         txset_hash_hex: &str,
     ) -> Result<IssueActionTokenParams> {
-        let pem = read_private_key_pem_checked(&private_key_pem_path)?;
+        let issuer_vault = load_action_token_issuer_vault(
+            Some(issuer_vault_dir),
+            Some(issuer_vault_passphrase_file),
+        )?;
+        let issuer_bundle = issuer_vault.bundle()?;
         Ok(IssueActionTokenParams {
             escrow_id_hex: escrow_id_hex.to_string(),
             txset_hash_hex: txset_hash_hex.to_string(),
             role,
             op,
-            issuer: "nxms-auth".to_string(),
+            issuer: issuer_bundle.issuer,
             algorithm: Algorithm::EdDSA,
-            encoding_key: EncodingKey::from_ed_pem(&pem)?,
+            encoding_key: EncodingKey::from_ed_pem(issuer_vault.private_key_pem().as_bytes())?,
             ttl_secs: 60,
             subject: format!("{}-operator", role.claim_value()),
             wallet_id: match role {
@@ -782,13 +813,13 @@ mod tests {
         (db, db_path)
     }
 
-    fn decode_claims(token: &str) -> ActionTokenClaims {
+    fn decode_claims(token: &str, public_key_pem: &str) -> ActionTokenClaims {
         let mut validation = Validation::new(Algorithm::EdDSA);
         validation.set_issuer(&["nxms-auth"]);
         validation.set_audience(&["sandbox:sbx-1"]);
         let decoded = decode::<ActionTokenClaims>(
             token,
-            &DecodingKey::from_ed_pem(ED25519_PUBLIC_PEM.as_bytes()).expect("decoding key"),
+            &DecodingKey::from_ed_pem(public_key_pem.as_bytes()).expect("decoding key"),
             &validation,
         )
         .expect("decode token");
@@ -801,18 +832,11 @@ mod tests {
         let txset_hash_hex = &"aa".repeat(32);
         let (db, db_path) =
             setup_db_with_workflow_and_proposal(escrow_id_hex, txset_hash_hex).await;
-
-        let key_path = unique_path("issuer", "pem");
-        std::fs::write(&key_path, ED25519_PRIVATE_PEM).expect("write private key");
-        #[cfg(unix)]
-        {
-            let mut perms = std::fs::metadata(&key_path).expect("meta").permissions();
-            perms.set_mode(0o600);
-            std::fs::set_permissions(&key_path, perms).expect("chmod 600");
-        }
+        let (vault_dir, pass_path, vault) = generate_issuer_vault("issuer_sign");
 
         let params = test_issue_params(
-            key_path.clone(),
+            vault_dir.clone(),
+            pass_path.clone(),
             ActionTokenRole::Seller,
             ActionTokenOp::SignMultisig,
             escrow_id_hex,
@@ -820,7 +844,7 @@ mod tests {
         )
         .expect("params");
         let out = issue_action_token(&db, &params).await.expect("issue token");
-        let claims = decode_claims(&out.token);
+        let claims = decode_claims(&out.token, &vault.bundle().expect("bundle").public_key_pem);
 
         assert_eq!(claims.op, "sign_multisig");
         assert_eq!(claims.scope, "sign_multisig");
@@ -832,8 +856,9 @@ mod tests {
         assert!(claims.proof_arbiter_jti.is_none());
         assert!(claims.proof_seller_jti.is_none());
         assert_ne!(claims.jti.trim(), "");
-
-        let _ = std::fs::remove_file(key_path);
+        let _ = std::fs::remove_dir_all(
+            vault_dir.parent().expect("vault dir parent cleanup"),
+        );
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -865,17 +890,11 @@ mod tests {
         .await
         .expect("seller proof");
 
-        let key_path = unique_path("issuer_submit", "pem");
-        std::fs::write(&key_path, ED25519_PRIVATE_PEM).expect("write private key");
-        #[cfg(unix)]
-        {
-            let mut perms = std::fs::metadata(&key_path).expect("meta").permissions();
-            perms.set_mode(0o600);
-            std::fs::set_permissions(&key_path, perms).expect("chmod 600");
-        }
+        let (vault_dir, pass_path, vault) = generate_issuer_vault("issuer_submit");
 
         let params = test_issue_params(
-            key_path.clone(),
+            vault_dir.clone(),
+            pass_path.clone(),
             ActionTokenRole::Arbiter,
             ActionTokenOp::SubmitMultisig,
             escrow_id_hex,
@@ -883,7 +902,7 @@ mod tests {
         )
         .expect("params");
         let out = issue_action_token(&db, &params).await.expect("issue token");
-        let claims = decode_claims(&out.token);
+        let claims = decode_claims(&out.token, &vault.bundle().expect("bundle").public_key_pem);
 
         assert_eq!(claims.op, "submit_multisig");
         assert_eq!(claims.role, "arbiter");
@@ -900,23 +919,24 @@ mod tests {
             claims.proof_seller_req_id.as_deref(),
             Some(expected_seller_req.as_str())
         );
-
-        let _ = std::fs::remove_file(key_path);
+        let _ = std::fs::remove_dir_all(
+            vault_dir.parent().expect("vault dir parent cleanup"),
+        );
         let _ = std::fs::remove_file(db_path);
     }
 
     #[cfg(unix)]
     #[test]
-    fn read_private_key_rejects_symlink_path() {
-        let real_path = unique_path("real_key", "pem");
-        let link_path = unique_path("link_key", "pem");
-        std::fs::write(&real_path, ED25519_PRIVATE_PEM).expect("write key");
+    fn read_owner_only_text_rejects_symlink_path() {
+        let real_path = unique_path("real_secret", "txt");
+        let link_path = unique_path("link_secret", "txt");
+        std::fs::write(&real_path, "correct horse battery\n").expect("write secret");
         let mut perms = std::fs::metadata(&real_path).expect("meta").permissions();
         perms.set_mode(0o600);
         std::fs::set_permissions(&real_path, perms).expect("chmod");
         symlink(&real_path, &link_path).expect("symlink");
 
-        let err = read_private_key_pem_checked(&link_path).expect_err("symlink must fail");
+        let err = read_owner_only_text(&link_path, "passphrase").expect_err("symlink must fail");
         assert!(err.to_string().contains("failed to open") || err.to_string().contains("unsafe"));
 
         let _ = std::fs::remove_file(link_path);
@@ -925,23 +945,15 @@ mod tests {
 
     #[test]
     fn build_issue_params_rejects_ttl_over_hard_limit() {
-        let key_path = unique_path("ttl_limit", "pem");
-        std::fs::write(&key_path, ED25519_PRIVATE_PEM).expect("write private key");
-        #[cfg(unix)]
-        {
-            let mut perms = std::fs::metadata(&key_path).expect("meta").permissions();
-            perms.set_mode(0o600);
-            std::fs::set_permissions(&key_path, perms).expect("chmod 600");
-        }
+        let (vault_dir, pass_path, _vault) = generate_issuer_vault("ttl_limit");
         let err = match build_issue_params(ActionTokenCliInput {
             escrow_id_hex: "00112233445566778899aabbccddeeff".to_string(),
             txset_hash_hex: "aa".repeat(32),
             role: ActionTokenRole::Seller,
             op: ActionTokenOp::SignMultisig,
             runtime_trust_bundle_path: None,
-            issuer: Some("nxms-auth".to_string()),
-            algorithm: "EDDSA".to_string(),
-            private_key_pem_path: Some(key_path.clone()),
+            issuer_vault_dir: Some(vault_dir.clone()),
+            issuer_vault_passphrase_file: Some(pass_path),
             ttl_secs: 121,
             subject: Some("seller-op".to_string()),
             wallet_id: Some("wallet-seller".to_string()),
@@ -953,6 +965,6 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.to_string().contains("ttl_secs exceeds hard limit"));
-        let _ = std::fs::remove_file(key_path);
+        let _ = std::fs::remove_dir_all(vault_dir.parent().expect("cleanup dir"));
     }
 }
