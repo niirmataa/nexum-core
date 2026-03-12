@@ -4,7 +4,8 @@ sandbox_id = "sandbox-arbiter-a"
 wallet_id = "wallet-arbiter-a"
 nettype = "stagenet" # mainnet | stagenet | testnet
 peers_path = "/etc/nxms/peers.json"
-keys_path = "/etc/nxms/keys.json"
+host_vault_dir = "/var/lib/nxms-signer/host-vault"
+host_vault_passphrase = "vault:/run/secrets/nxms/host_vault_passphrase"
 db_path = "/var/lib/nxms-signer/signer.db"
 
 mailbox_url = "http://exampleonionaddress.onion"

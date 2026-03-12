@@ -3,9 +3,11 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use serde::{Deserialize, Serialize};
 use std::ffi::CString;
 use std::fmt;
+use std::io::{Read, Write};
 use std::os::raw::{c_char, c_void};
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 use std::ptr;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -215,17 +217,13 @@ impl Keys {
     }
 
     pub fn read_json(path: &std::path::Path) -> Result<Self> {
-        let data = Zeroizing::new(std::fs::read(path)?);
+        let data = Zeroizing::new(read_secret_file(path)?);
         Ok(serde_json::from_slice(data.as_slice())?)
     }
 
     pub fn write_json(&self, path: &str) -> Result<()> {
         let data = Zeroizing::new(serde_json::to_vec_pretty(self)?);
-        std::fs::write(path, data.as_slice())?;
-        #[cfg(unix)]
-        {
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-        }
+        write_secret_file(Path::new(path), data.as_slice())?;
         Ok(())
     }
 
@@ -265,6 +263,99 @@ impl Keys {
     pub fn sig_sk_zeroizing(&self) -> Result<Zeroizing<Vec<u8>>> {
         Ok(Zeroizing::new(self.decode_sig_sk()?))
     }
+}
+
+#[cfg(unix)]
+pub(crate) fn read_secret_file(path: &Path) -> Result<Vec<u8>> {
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| anyhow!("failed to open secret file {}: {}", path.display(), e))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| anyhow!("failed to stat secret file {}: {}", path.display(), e))?;
+    validate_secret_file_metadata(path, &metadata)?;
+    let mut out = Vec::new();
+    file.read_to_end(&mut out)
+        .map_err(|e| anyhow!("failed to read secret file {}: {}", path.display(), e))?;
+    Ok(out)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn read_secret_file(path: &Path) -> Result<Vec<u8>> {
+    Ok(std::fs::read(path)?)
+}
+
+#[cfg(unix)]
+pub(crate) fn write_secret_file(path: &Path, data: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp_path = secret_temp_path(path);
+    let _ = std::fs::remove_file(&tmp_path);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&tmp_path)
+        .map_err(|e| anyhow!("failed to create secret file {}: {}", tmp_path.display(), e))?;
+    file.write_all(data)
+        .map_err(|e| anyhow!("failed to write secret file {}: {}", tmp_path.display(), e))?;
+    file.sync_all()
+        .map_err(|e| anyhow!("failed to sync secret file {}: {}", tmp_path.display(), e))?;
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        anyhow!(
+            "failed to replace secret file {} -> {}: {}",
+            tmp_path.display(),
+            path.display(),
+            e
+        )
+    })?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| anyhow!("failed to chmod secret file {}: {}", path.display(), e))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+pub(crate) fn write_secret_file(path: &Path, data: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, data)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) fn validate_secret_file_metadata(
+    path: &Path,
+    metadata: &std::fs::Metadata,
+) -> Result<()> {
+    if !metadata.is_file() {
+        return Err(anyhow!(
+            "secret file path is not a regular file: {}",
+            path.display()
+        ));
+    }
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        return Err(anyhow!(
+            "secret file {} has unsafe permissions {:03o}; require 0600",
+            path.display(),
+            mode
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn secret_temp_path(path: &Path) -> PathBuf {
+    path.with_extension(format!("tmp-{}", std::process::id()))
 }
 
 #[derive(Clone, Debug)]

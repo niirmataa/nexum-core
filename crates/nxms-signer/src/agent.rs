@@ -20,6 +20,7 @@ use anyhow::{Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use nxms_mailbox_client::MailboxClient;
 use nxms_transport::crypto::{Keys, SealedPacket, decrypt, encrypt, suite_kem_id, suite_sig_id};
+use nxms_transport::host_vault::load_host_keys;
 use nxms_transport::peers::PeerBook;
 use nxms_transport::trust::RuntimeTrustBundle;
 use nxms_transport::wire::{
@@ -67,7 +68,7 @@ impl SignerAgent {
     pub async fn from_config(cfg: SignerConfig) -> Result<Self> {
         enforce_production_requirements(cfg.production_hardening)?;
         let peers = PeerBook::load(cfg.peers_path.clone())?;
-        let keys = Keys::read_json(&cfg.keys_path)?;
+        let keys = load_host_keys(&cfg.host_vault_dir, &cfg.host_vault_passphrase)?;
         let runtime_trust_bundle = validate_runtime_trust_projection(&cfg, &keys, &peers)?;
         let db = SignerDb::new(cfg.db_path.clone());
         db.init().await?;

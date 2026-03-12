@@ -380,7 +380,8 @@ async fn make_agent(
         wallet_id: "wallet-local".to_string(),
         nettype: "stagenet".to_string(),
         peers_path: PathBuf::new(),
-        keys_path: PathBuf::new(),
+        host_vault_dir: PathBuf::new(),
+        host_vault_passphrase: "correct horse battery".to_string(),
         runtime_trust_bundle_path: None,
         db_path: PathBuf::new(),
         mailbox_url: mailbox_url.clone(),
@@ -451,6 +452,7 @@ async fn make_agent(
         mailbox,
         wallet,
         action_token_verifier: None,
+        runtime_trust_bundle: None,
     }
 }
 
@@ -934,7 +936,8 @@ fn resolve_wallet_cli_wallet_file_prefers_wallet_dir_for_relative_name() {
         wallet_id: "wallet-local".to_string(),
         nettype: "stagenet".to_string(),
         peers_path: PathBuf::from("/tmp/peers.json"),
-        keys_path: PathBuf::from("/tmp/keys.json"),
+        host_vault_dir: PathBuf::from("/tmp/host-vault"),
+        host_vault_passphrase: "correct horse battery".to_string(),
         runtime_trust_bundle_path: None,
         db_path: PathBuf::from("/tmp/signer.db"),
         mailbox_url: "http://mailbox.onion".to_string(),

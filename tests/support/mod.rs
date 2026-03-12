@@ -29,6 +29,7 @@ use nxms_signer::{
 };
 use nxms_transport::admission::EscrowAdmissionArtifact;
 use nxms_transport::crypto::{decrypt, encrypt, suite_kem_id, suite_sig_id, Keys, SealedPacket};
+use nxms_transport::host_vault::HostVault;
 use nxms_transport::peers::{Peer, PeerBook};
 use nxms_transport::trust::{RuntimeActionTokenIssuer, RuntimeTrustBundle, RuntimeTrustPeer};
 use nxms_transport::wire::{
@@ -80,12 +81,12 @@ impl WorkspaceSignerHarness {
         let peer_keys = Keys::generate().context("generate peer keys")?;
         let ag01_keys = Keys::generate().context("generate ag01 keys")?;
         let ag02_keys = Keys::generate().context("generate ag02 keys")?;
-        let keys_path = tempdir.path().join("local_keys.json");
+        let host_vault_dir = tempdir.path().join("host-vault");
         let peers_path = tempdir.path().join("peers.json");
         let action_pub_key_path = tempdir.path().join("action_token_ed25519.pub.pem");
         let db_path = tempdir.path().join("signer.db");
 
-        write_keys_json(&keys_path, &local_keys)?;
+        write_host_vault(&host_vault_dir, "local", "correct horse battery", &local_keys)?;
         write_peers_json(&peers_path, &peer_keys)?;
         write_public_key_pem(&action_pub_key_path)?;
 
@@ -96,7 +97,8 @@ impl WorkspaceSignerHarness {
             wallet_id: "wallet-local".to_string(),
             nettype: "stagenet".to_string(),
             peers_path,
-            keys_path,
+            host_vault_dir,
+            host_vault_passphrase: "correct horse battery".to_string(),
             runtime_trust_bundle_path: None,
             db_path: db_path.clone(),
             mailbox_url: mailbox_url.clone(),
@@ -628,9 +630,9 @@ async fn spawn_real_mailbox_server(tempdir: &TempDir) -> Result<String> {
     Ok(format!("http://{addr}"))
 }
 
-fn write_keys_json(path: &Path, keys: &Keys) -> Result<()> {
-    keys.write_json(&path.to_string_lossy())
-        .with_context(|| format!("write keys json {}", path.display()))
+fn write_host_vault(dir: &Path, local_id: &str, passphrase: &str, keys: &Keys) -> Result<()> {
+    HostVault::store(dir, passphrase, local_id, keys)
+        .with_context(|| format!("write host vault {}", dir.display()))
 }
 
 fn write_peers_json(path: &Path, peer_keys: &Keys) -> Result<()> {

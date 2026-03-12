@@ -94,7 +94,8 @@ pub struct SignerConfig {
     #[serde(default = "default_nettype")]
     pub nettype: String,
     pub peers_path: PathBuf,
-    pub keys_path: PathBuf,
+    pub host_vault_dir: PathBuf,
+    pub host_vault_passphrase: String,
     #[serde(default)]
     pub runtime_trust_bundle_path: Option<PathBuf>,
     pub db_path: PathBuf,
@@ -211,6 +212,8 @@ impl SignerConfig {
             secret_uses_vault_reference(&self.wallet_rpc.wallet_password);
         let wallet_rpc_password_from_vault_ref =
             secret_uses_vault_reference(&self.wallet_rpc.password);
+        let host_vault_passphrase_from_vault_ref =
+            secret_uses_vault_reference(&self.host_vault_passphrase);
 
         self.local_id = self.local_id.trim().to_string();
         if self.local_id.is_empty() {
@@ -233,6 +236,16 @@ impl SignerConfig {
             _ => {
                 return Err(anyhow!("nettype must be one of: mainnet|stagenet|testnet"));
             }
+        }
+        if self.host_vault_dir.as_os_str().is_empty() {
+            return Err(anyhow!("host_vault_dir must not be empty"));
+        }
+        self.host_vault_passphrase =
+            resolve_secret_value(&self.host_vault_passphrase, "host_vault_passphrase")?;
+        if self.host_vault_passphrase.trim().len() < 12 {
+            return Err(anyhow!(
+                "host_vault_passphrase must resolve to at least 12 characters"
+            ));
         }
         if let Some(path) = &self.runtime_trust_bundle_path
             && path.as_os_str().is_empty()
@@ -466,6 +479,11 @@ impl SignerConfig {
             if !wallet_rpc_password_from_vault_ref {
                 return Err(anyhow!(
                     "production_hardening=true requires wallet_rpc.password to use vault: secret reference"
+                ));
+            }
+            if !host_vault_passphrase_from_vault_ref {
+                return Err(anyhow!(
+                    "production_hardening=true requires host_vault_passphrase to use vault: secret reference"
                 ));
             }
             if self.mailbox_push_token.as_deref().unwrap_or_default().len() < 16 {
@@ -810,7 +828,8 @@ mod tests {
             wallet_id: "wallet-1".to_string(),
             nettype: "stagenet".to_string(),
             peers_path: PathBuf::from("peers.json"),
-            keys_path: PathBuf::from("keys.json"),
+            host_vault_dir: PathBuf::from("host-vault"),
+            host_vault_passphrase: "correct horse battery".to_string(),
             runtime_trust_bundle_path: None,
             db_path: PathBuf::from("signer.db"),
             mailbox_url: "http://mailbox.onion".to_string(),
@@ -893,6 +912,8 @@ mod tests {
     }
 
     fn apply_production_vault_secrets(cfg: &mut SignerConfig) -> TestVaultSecrets {
+        let host_vault_passphrase =
+            temp_secret_file("host_vault_passphrase", "correct horse battery");
         let wallet_password = temp_secret_file("wallet_password", "wallet-pass");
         let rpc_password = temp_secret_file("rpc_password", "rpc-pass");
         let mailbox_push_token = temp_secret_file("mailbox_push_token", "1234567890abcdef-push");
@@ -901,6 +922,7 @@ mod tests {
         let worker_service_token =
             temp_secret_file("worker_service_token", "1234567890abcdef-worker");
 
+        cfg.host_vault_passphrase = format!("vault:{}", host_vault_passphrase.display());
         cfg.wallet_rpc.wallet_password = format!("vault:{}", wallet_password.display());
         cfg.wallet_rpc.password = format!("vault:{}", rpc_password.display());
         cfg.mailbox_push_token = Some(format!("vault:{}", mailbox_push_token.display()));
@@ -910,6 +932,7 @@ mod tests {
 
         TestVaultSecrets {
             paths: vec![
+                host_vault_passphrase,
                 wallet_password,
                 rpc_password,
                 mailbox_push_token,
@@ -1173,6 +1196,7 @@ mod tests {
         let _vault = apply_production_vault_secrets(&mut cfg);
         cfg.normalize()
             .expect("vault secret refs should pass in hardening");
+        assert_eq!(cfg.host_vault_passphrase, "correct horse battery");
         assert_eq!(cfg.wallet_rpc.wallet_password, "wallet-pass");
         assert_eq!(cfg.wallet_rpc.password, "rpc-pass");
         assert_eq!(
