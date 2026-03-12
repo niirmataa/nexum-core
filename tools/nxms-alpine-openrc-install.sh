@@ -8,6 +8,10 @@ Usage:
 
 Canonical Alpine/OpenRC install path for NXMS runtime artifacts from the current repo checkout.
 
+Build the binaries first as the checkout owner (for example `operator`), not as `root`.
+Running `cargo build` as `root` inside the repo can poison `target/` ownership and break
+later non-root rebuilds with `Permission denied`.
+
 Installs:
   - /opt/nxms/bin/{nxms-mailbox,nxms-signer,nxms-escrow-orchestrator,nxms-host-bootstrap}
   - /etc/init.d/{nxms-mailbox,nxms-signer}

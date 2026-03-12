@@ -223,12 +223,20 @@ Inside repo:
 ```bash
 cargo fmt --all
 cargo check --workspace
-cargo build --release -p nxms-mailbox -p nxms-signer -p nxms-escrow-orchestrator
+cargo build --release -p nxms-mailbox -p nxms-signer -p nxms-escrow-orchestrator -p nxms-host-bootstrap
+```
+
+Run that build as the normal owner of the checkout, not as `root`.
+If the host still has old snapshot checkouts, stale `/opt/nxms/bin` binaries, or a poisoned `target/` tree from earlier root builds, reset once first:
+
+```bash
+doas tools/nxms-alpine-reset-runtime.sh --repo-root /home/operator/nexum-core --operator-home /home/operator --purge-bare-repo
 ```
 
 Verify:
 
 ```bash
+ls -l target/release/nxms-host-bootstrap
 ls -l target/release/nxms-mailbox
 ls -l target/release/nxms-signer
 ls -l target/release/nxms-escrow-orchestrator

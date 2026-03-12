@@ -2,6 +2,11 @@
 
 Repo-managed OpenRC runtime baseline for Alpine:
 
+Operational rule:
+- Build runtime binaries from the canonical repo checkout as its normal owner, not as `root`.
+  If the host has stale snapshot checkouts, stale `/opt/nxms/bin` binaries, or a poisoned `target/`,
+  reset first with `tools/nxms-alpine-reset-runtime.sh`.
+
 - `nxms-mailbox`
   Canonical mailbox daemon.
   Runs `nxms-mailbox serve --config /etc/nxms/mailbox.toml` on loopback only.
