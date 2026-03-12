@@ -12,6 +12,7 @@ use tracing::warn;
 const ENV_STORE: &str = "NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE";
 const ENV_STORE_REQUIRED: &str = "NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE_REQUIRED";
 const ENV_VERIFY: &str = "NXMS_SIGNER_ORCH_QUORUM_PROOF_VERIFY";
+const ENV_ORCH_CONFIG_PATH: &str = "NXMS_ORCH_CONFIG_PATH";
 const ENV_BRIDGE_TOKEN: &str = "NXMS_SIGNER_ORCH_BRIDGE_TOKEN";
 const ENV_BRIDGE_TOKEN_REF: &str = "NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF";
 const ENV_BRIDGE_TOKEN_INPUT: &str = "NXMS_ORCH_BRIDGE_TOKEN_INPUT";
@@ -38,7 +39,13 @@ pub(crate) struct OrchestratorSubmitMultisigProofBundle {
 }
 
 pub(crate) fn enforce_production_requirements(production_hardening: bool) -> Result<()> {
-    let _ = resolve_submit_verify_mode(production_hardening, env_true(ENV_VERIFY))?;
+    let verify_enabled = resolve_submit_verify_mode(production_hardening, env_true(ENV_VERIFY))?;
+    let bridge_enabled =
+        env_true(ENV_STORE) || env_true(ENV_STORE_REQUIRED) || verify_enabled;
+    if !bridge_enabled {
+        return Ok(());
+    }
+    require_orchestrator_config_path()?;
     let (token, source) = bridge_token()?.ok_or_else(|| {
         anyhow!(
             "missing bridge token: set {}=vault:/path (preferred) or {} (legacy)",
@@ -177,8 +184,6 @@ async fn store_quorum_sign_proof(
     let args = vec![
         "quorum-proof".to_string(),
         "set".to_string(),
-        "--db-path".to_string(),
-        orchestrator_db_path(),
         "--escrow-id-hex".to_string(),
         escrow_id_hex,
         "--role".to_string(),
@@ -205,8 +210,6 @@ async fn fetch_submit_multisig_proof_bundle(
     let args = vec![
         "quorum-proof".to_string(),
         "submit-bundle".to_string(),
-        "--db-path".to_string(),
-        orchestrator_db_path(),
         "--escrow-id-hex".to_string(),
         escrow_id_hex.clone(),
         "--txset-hash-hex".to_string(),
@@ -236,12 +239,20 @@ fn orchestrator_bin() -> String {
         .unwrap_or_else(|| "nxms-escrow-orchestrator".to_string())
 }
 
-fn orchestrator_db_path() -> String {
-    env::var("NXMS_ORCH_DB_PATH")
+fn orchestrator_config_path() -> Option<String> {
+    env::var(ENV_ORCH_CONFIG_PATH)
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "nxms_orchestrator.db".to_string())
+}
+
+fn require_orchestrator_config_path() -> Result<String> {
+    orchestrator_config_path().ok_or_else(|| {
+        anyhow!(
+            "missing orchestrator config path: set {} to the canonical orchestrator TOML",
+            ENV_ORCH_CONFIG_PATH
+        )
+    })
 }
 
 fn orchestrator_timeout_secs() -> u64 {
@@ -254,6 +265,7 @@ fn orchestrator_timeout_secs() -> u64 {
 
 async fn run_orchestrator_command(args: Vec<String>) -> Result<String> {
     let bin = orchestrator_bin();
+    let orchestrator_config_path = require_orchestrator_config_path()?;
     let timeout_secs = orchestrator_timeout_secs();
     let args_for_log = redact_args_for_log(&args);
     let bridge_token = bridge_token()?.map(|(value, _kind)| value);
@@ -262,6 +274,7 @@ async fn run_orchestrator_command(args: Vec<String>) -> Result<String> {
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    cmd.env(ENV_ORCH_CONFIG_PATH, orchestrator_config_path);
     if let Some(token) = bridge_token.as_deref() {
         cmd.env(ENV_BRIDGE_TOKEN_INPUT, token);
     }
@@ -512,11 +525,38 @@ mod tests {
     }
 
     #[test]
+    fn require_orchestrator_config_path_rejects_missing_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        // SAFETY: tests serialize environment mutation with env_lock.
+        unsafe {
+            std::env::remove_var(ENV_ORCH_CONFIG_PATH);
+        }
+        let err = require_orchestrator_config_path().expect_err("missing config path must fail");
+        assert!(err.to_string().contains(ENV_ORCH_CONFIG_PATH));
+    }
+
+    #[test]
+    fn require_orchestrator_config_path_accepts_non_empty_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        // SAFETY: tests serialize environment mutation with env_lock.
+        unsafe {
+            std::env::set_var(ENV_ORCH_CONFIG_PATH, "/etc/nxms/orchestrator.toml");
+        }
+        let path = require_orchestrator_config_path().expect("config path");
+        assert_eq!(path, "/etc/nxms/orchestrator.toml");
+        // SAFETY: tests serialize environment mutation with env_lock.
+        unsafe {
+            std::env::remove_var(ENV_ORCH_CONFIG_PATH);
+        }
+    }
+
+    #[test]
     fn enforce_production_requires_bridge_token() {
         let _guard = env_lock().lock().expect("env lock");
         // SAFETY: tests serialize environment mutation with env_lock.
         unsafe {
             std::env::set_var(ENV_VERIFY, "true");
+            std::env::set_var(ENV_ORCH_CONFIG_PATH, "/etc/nxms/orchestrator.toml");
             std::env::remove_var(ENV_BRIDGE_TOKEN);
             std::env::remove_var(ENV_BRIDGE_TOKEN_REF);
         }
@@ -524,8 +564,24 @@ mod tests {
         assert!(err.to_string().contains(ENV_BRIDGE_TOKEN_REF));
         // SAFETY: tests serialize environment mutation with env_lock.
         unsafe {
+            std::env::remove_var(ENV_ORCH_CONFIG_PATH);
             std::env::remove_var(ENV_VERIFY);
         }
+    }
+
+    #[test]
+    fn enforce_production_allows_no_bridge_when_disabled() {
+        let _guard = env_lock().lock().expect("env lock");
+        // SAFETY: tests serialize environment mutation with env_lock.
+        unsafe {
+            std::env::remove_var(ENV_ORCH_CONFIG_PATH);
+            std::env::remove_var(ENV_VERIFY);
+            std::env::remove_var(ENV_STORE);
+            std::env::remove_var(ENV_STORE_REQUIRED);
+            std::env::remove_var(ENV_BRIDGE_TOKEN);
+            std::env::remove_var(ENV_BRIDGE_TOKEN_REF);
+        }
+        enforce_production_requirements(false).expect("bridge disabled");
     }
 
     #[test]
@@ -547,12 +603,14 @@ mod tests {
         // SAFETY: tests serialize environment mutation with env_lock.
         unsafe {
             std::env::set_var(ENV_VERIFY, "true");
+            std::env::set_var(ENV_ORCH_CONFIG_PATH, "/etc/nxms/orchestrator.toml");
             std::env::set_var(ENV_BRIDGE_TOKEN_REF, format!("vault:{}", path.display()));
             std::env::remove_var(ENV_BRIDGE_TOKEN);
         }
         enforce_production_requirements(true).expect("bridge token accepted");
         // SAFETY: tests serialize environment mutation with env_lock.
         unsafe {
+            std::env::remove_var(ENV_ORCH_CONFIG_PATH);
             std::env::remove_var(ENV_BRIDGE_TOKEN);
             std::env::remove_var(ENV_BRIDGE_TOKEN_REF);
             std::env::remove_var(ENV_VERIFY);
@@ -566,6 +624,7 @@ mod tests {
         // SAFETY: tests serialize environment mutation with env_lock.
         unsafe {
             std::env::set_var(ENV_VERIFY, "true");
+            std::env::set_var(ENV_ORCH_CONFIG_PATH, "/etc/nxms/orchestrator.toml");
             std::env::set_var(
                 ENV_BRIDGE_TOKEN,
                 "0123456789abcdef0123456789abcdef0123456789abcdef",
@@ -577,6 +636,7 @@ mod tests {
         assert!(err.to_string().contains(ENV_BRIDGE_TOKEN_REF));
         // SAFETY: tests serialize environment mutation with env_lock.
         unsafe {
+            std::env::remove_var(ENV_ORCH_CONFIG_PATH);
             std::env::remove_var(ENV_BRIDGE_TOKEN);
             std::env::remove_var(ENV_BRIDGE_TOKEN_REF);
             std::env::remove_var(ENV_VERIFY);

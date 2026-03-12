@@ -22,7 +22,8 @@ Scope: canonical Monero runtime prerequisite for `nxms-signer run` on Alpine/Ope
 ## Why This Is P0
 `nxms-signer` does real startup work in `SignerAgent::from_config()`:
 - loads `peers.json`
-- loads `keys.json`
+- loads host identity from `host vault`
+- loads `runtime_trust_bundle`
 - opens signer DB
 - opens wallet through `wallet-rpc`
 - checks `is_multisig`
@@ -125,7 +126,8 @@ So a signer host without real `monerod` and `wallet-rpc` is not a truthful runti
 - `monero-wallet-rpc` started and reachable on `127.0.0.1:38088`
 - signer wallet present on disk
 - wallet-rpc credentials stored as secret refs
-- signer `keys.json`
+- signer `host vault`
+- signer `runtime_trust_bundle`
 - signer `peers.json`
 - signer action-token public key PEM
 - signer mailbox `.onion` URL and scoped mailbox tokens

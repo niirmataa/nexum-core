@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 pub const ENV_ORCHESTRATOR_CONFIG_PATH: &str = "NXMS_ORCH_CONFIG_PATH";
+pub const ENV_ORCHESTRATOR_DB_PATH: &str = "NXMS_ORCH_DB_PATH";
 
 fn default_action_token_ttl_secs() -> u64 {
     60
@@ -82,6 +83,15 @@ pub fn load_optional_orchestrator_config(
             .map(PathBuf::from)
     });
     path.map(OrchestratorConfig::from_toml_path).transpose()
+}
+
+pub fn resolve_orchestrator_db_path(
+    config: Option<&OrchestratorConfig>,
+    db_path: Option<PathBuf>,
+) -> PathBuf {
+    db_path
+        .or_else(|| config.map(|cfg| cfg.db_path.clone()))
+        .unwrap_or_else(|| PathBuf::from("nxms_orchestrator.db"))
 }
 
 #[cfg(test)]
@@ -176,5 +186,28 @@ issuer_vault_passphrase_file = "/run/nxms/action-token-issuer.passphrase"
             .expect("config from cli path");
         assert_eq!(cfg.db_path, PathBuf::from("/var/lib/nxms/orchestrator.db"));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn resolve_orchestrator_db_path_prefers_cli_override() {
+        let cfg = OrchestratorConfig {
+            db_path: PathBuf::from("/var/lib/nxms/from-config.db"),
+            runtime_trust_bundle_path: None,
+            action_token: None,
+        };
+        let resolved =
+            resolve_orchestrator_db_path(Some(&cfg), Some(PathBuf::from("/tmp/from-cli.db")));
+        assert_eq!(resolved, PathBuf::from("/tmp/from-cli.db"));
+    }
+
+    #[test]
+    fn resolve_orchestrator_db_path_falls_back_to_config() {
+        let cfg = OrchestratorConfig {
+            db_path: PathBuf::from("/var/lib/nxms/from-config.db"),
+            runtime_trust_bundle_path: None,
+            action_token: None,
+        };
+        let resolved = resolve_orchestrator_db_path(Some(&cfg), None);
+        assert_eq!(resolved, PathBuf::from("/var/lib/nxms/from-config.db"));
     }
 }

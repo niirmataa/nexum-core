@@ -6,6 +6,7 @@ nettype = "stagenet" # mainnet | stagenet | testnet
 peers_path = "/etc/nxms/peers.json"
 host_vault_dir = "/var/lib/nxms-signer/host-vault"
 host_vault_passphrase = "vault:/run/secrets/nxms/host_vault_passphrase"
+runtime_trust_bundle_path = "/var/lib/nxms/bootstrap/runtime-trust.final.json"
 db_path = "/var/lib/nxms-signer/signer.db"
 
 mailbox_url = "http://exampleonionaddress.onion"
@@ -34,7 +35,7 @@ password = "vault:/run/secrets/nxms/wallet_rpc_password"
 
 [wallet_provision]
 enabled = true
-wallet_cli_path = "/usr/local/bin/monero-wallet-cli"
+wallet_cli_path = "/opt/monero/current/monero-wallet-cli"
 wallet_dir = "/var/lib/monero/wallets"
 daemon_address = "127.0.0.1:38081"
 trusted_daemon = true

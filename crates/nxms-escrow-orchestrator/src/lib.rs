@@ -11,7 +11,8 @@ pub use action_token::{
     IssuedActionTokenOutput, build_issue_params, handle_action_token, issue_action_token,
 };
 pub use config::{
-    ENV_ORCHESTRATOR_CONFIG_PATH, OrchestratorConfig, load_optional_orchestrator_config,
+    ENV_ORCHESTRATOR_CONFIG_PATH, ENV_ORCHESTRATOR_DB_PATH, OrchestratorConfig,
+    load_optional_orchestrator_config, resolve_orchestrator_db_path,
 };
 pub use db::{OrchestratorDb, SloAlertThresholds};
 

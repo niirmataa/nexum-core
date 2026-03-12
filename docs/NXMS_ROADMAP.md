@@ -33,7 +33,7 @@ swiadomie odlozony.
 ### B1. Bootstrap trustu i artefaktow runtime
 - [x] Domknac lifecycle `customer identity record` i `customer identity snapshot`.
 - [x] Domknac source of truth dla aktywnego `runtime trust bundle`.
-- [x] Domknac pochodzenie `keys.json`, `peers.json` i `action_token_pub.pem`.
+- [x] Domknac pochodzenie `host vault`, `peers.json` i `action_token_pub.pem`.
 - [x] Domknac zasade, ze `mailbox` tylko przesyla, a nie legalizuje runtime.
 
 ### C. All-in-one logical split

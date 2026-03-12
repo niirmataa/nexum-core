@@ -3,7 +3,7 @@ NXMS_GROUP="nxms"
 NXMS_WORKDIR="/opt/nxms"
 
 NXMS_SIGNER_BIN="/opt/nxms/bin/nxms-signer"
-NXMS_SIGNER_STATE_DIR="/var/lib/nxms/signer"
+NXMS_SIGNER_STATE_DIR="/var/lib/nxms-signer"
 NXMS_SIGNER_CONFIG="/etc/nxms/signer.toml"
 
 # Canonical runtime mode for signer under OpenRC is mailbox consumer loop (`run`).
@@ -13,12 +13,13 @@ RUST_LOG="info"
 NXMS_SIGNER_STDOUT_LOG="/var/log/nxms/signer.log"
 NXMS_SIGNER_STDERR_LOG="/var/log/nxms/signer.err"
 
-# Optional control-plane bridge.
-# Keep disabled unless signer must store/verify quorum proofs through orchestrator CLI.
+# Canonical production_hardening bridge baseline.
+# In production_hardening, signer must verify orchestrator quorum proofs through
+# the orchestrator CLI using the canonical config path and a vault-backed bridge token.
 NXMS_ORCH_BIN="/opt/nxms/bin/nxms-escrow-orchestrator"
-NXMS_ORCH_DB_PATH="/var/lib/nxms/orchestrator/nxms_orchestrator.db"
+NXMS_ORCH_CONFIG_PATH="/etc/nxms/orchestrator.toml"
 NXMS_SIGNER_ORCH_TIMEOUT_SECS="15"
 NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE="false"
 NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE_REQUIRED="false"
-NXMS_SIGNER_ORCH_QUORUM_PROOF_VERIFY="false"
-NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF=""
+NXMS_SIGNER_ORCH_QUORUM_PROOF_VERIFY="true"
+NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF="vault:/run/secrets/nxms/orch_bridge_token"

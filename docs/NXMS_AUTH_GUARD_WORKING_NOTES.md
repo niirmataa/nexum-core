@@ -191,7 +191,7 @@ Data startu notatek: 2026-03-11
 
 - `mailbox` tylko przesyła ciphertext envelope i na tym kończy swoją rolę.
 - `mailbox` nie jest źródłem legalności, trust rootem ani źródłem prawdy workflow.
-- `keys.json` jest lokalnym sekretem hosta runtime i ma powstawać lokalnie na danym hoście.
+- `host vault` jest lokalnym sekretem hosta runtime i ma powstawać lokalnie na danym hoście.
 - `peers.json` nie może być ręcznie klejonym źródłem prawdy; ma być lokalną materializacją aktywnego guard-approved trust bundle.
 - `action_token_pub.pem` także ma być tylko lokalną materializacją aktywnego trust bundle, a nie luźnym plikiem z niejasnego pochodzenia.
 - `orchestrator` prowadzi zwykły `AUTO multisig` runtime.

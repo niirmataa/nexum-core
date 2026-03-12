@@ -163,6 +163,12 @@ Status docelowy:
 - operator manual console istnieje osobno i tylko jako ścieżka awaryjna,
 - guard/admin tooling istnieje osobno i nie miesza się z user CLI.
 
+Kierunek dla późniejszej ścieżki operatorskiej:
+- rozważane opcje to: samo `SSH`, `SSH + Falcon challenge` po zalogowaniu oraz osobny silnie ograniczony operator control path bez shell-first modelu,
+- odrzucony kierunek docelowy: samo `SSH` jako wystarczający warunek wejścia do dalszych akcji runtime,
+- wybrany kierunek docelowy: bounded operator actions mają wymagać dodatkowego `Falcon challenge-response` po zalogowaniu, wzorowanego na mechanizmie challenge z `nexum-cli`,
+- ten gate nie blokuje obecnego bootstrapu i auto runtime, ale jest obowiązkowy przed dopuszczeniem realnych ręcznych akcji operatora przez orchestrator.
+
 Status bieżący repo:
 - obecny kod `tools/nexum-cli` nadal zawiera legacy/manual surface wykraczający poza target scope,
 - dopóki ten drift nie zostanie usunięty z implementacji, obowiązującym kontraktem pozostaje ten dokument, a nie historyczny zakres komend.
@@ -239,7 +245,9 @@ Bootstrap runtime:
 - każdy host runtime generuje lokalnie własny zaszyfrowany sekret hostowy, tj. `host vault`,
 - aktywny peer set runtime i aktywny issuer runtime auth mają pochodzić z guard-approved trust bundle dla danej epoki,
 - lokalne pliki runtime takie jak `peers.json` i `action_token_pub.pem` są tylko materializacją aktywnego trust bundle, a nie samodzielnym source of truth,
-- passphrase do `host vault` nie ma być trwałym sekretem na dysku; docelowy baseline to runtime secret w `/run/...` na `tmpfs`, a brak unseal ma kończyć się fail-closed,
+- passphrase do `host vault` i `action token issuer vault` nie ma być trwałym sekretem na dysku; obecnie akceptowany baseline to owner-only runtime secret w `/run/...` na `tmpfs`, a brak unseal ma kończyć się fail-closed,
+- ścieżka configu usługi i service env wskazujące lokalizację configu albo runtime secretów nie są traktowane jako sekret; sekretem pozostaje wyłącznie zawartość vaulta i zawartość runtime unseal secret,
+- obecny baseline `/run/...` jest etapem przejściowym; docelowy mechanizm produkcyjny to `TPM2-sealed unseal` związany z `measured boot` hosta, z unseal wyłącznie do root-only ścieżki w `/run/...` na czas działania usługi, bez trwałego pliku z passphrase na dysku,
 - zwykłe escrow ma działać jako `AUTO multisig` po jednorazowym legalnym admission danego escrow do auto-runtime.
 
 ---
@@ -260,6 +268,10 @@ Lokalne pliki runtime są tylko projekcją tego bundle:
 - `host vault` jest lokalnym sekretem hosta i nie pochodzi z zewnątrz,
 - `peers.json` jest lokalną projekcją aktywnego peer setu z `runtime_trust_bundle`,
 - `action_token_pub.pem` jest lokalną projekcją aktywnego publicznego klucza issuera runtime auth z `runtime_trust_bundle`.
+
+Konfiguracja runtime hosta ma być zgodna z tym modelem:
+- live `signer.toml` używający `keys_path` jest legacy drift i nie jest kanonicznym baseline,
+- kanoniczny signer config ma wskazywać `host_vault_dir`, `host_vault_passphrase` i `runtime_trust_bundle_path`.
 
 `mailbox` tokeny są tylko scoped sekretami operacyjnymi transportu.
 Nie są trust rootem, nie legalizują runtime i nie zastępują quorum guardów.

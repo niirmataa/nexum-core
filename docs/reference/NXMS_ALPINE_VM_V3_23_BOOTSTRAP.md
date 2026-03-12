@@ -249,7 +249,6 @@ doas mkdir -p /opt/monero
 doas mkdir -p /etc/nxms
 doas mkdir -p /etc/monero
 doas mkdir -p /var/lib/nxms/mailbox
-doas mkdir -p /var/lib/nxms/signer
 doas mkdir -p /var/lib/nxms/orchestrator
 doas mkdir -p /var/lib/monero/stagenet
 doas mkdir -p /var/lib/monero/wallets
@@ -261,7 +260,7 @@ doas chown -R nxms:nxms /var/lib/nxms
 doas chown -R nxms:nxms /var/log/nxms
 doas chown -R monero:monero /var/lib/monero
 doas chown -R monero:monero /var/log/monero
-doas chmod 0750 /var/lib/nxms /var/lib/nxms/mailbox /var/lib/nxms/signer /var/lib/nxms/orchestrator
+doas chmod 0750 /var/lib/nxms /var/lib/nxms/mailbox /var/lib/nxms/orchestrator
 doas chmod 0750 /var/log/nxms
 doas chmod 0750 /var/lib/monero /var/lib/monero/stagenet /var/lib/monero/wallets
 doas chmod 0750 /var/log/monero
@@ -272,9 +271,22 @@ doas chmod 0750 /run/secrets/nxms
 Install binaries:
 
 ```bash
+doas install -m 0755 target/release/nxms-host-bootstrap /opt/nxms/bin/nxms-host-bootstrap
 doas install -m 0755 target/release/nxms-mailbox /opt/nxms/bin/nxms-mailbox
 doas install -m 0755 target/release/nxms-signer /opt/nxms/bin/nxms-signer
 doas install -m 0755 target/release/nxms-escrow-orchestrator /opt/nxms/bin/nxms-escrow-orchestrator
+```
+
+Canonical repo-managed install path for Alpine/OpenRC:
+
+```bash
+doas tools/nxms-alpine-openrc-install.sh --profile release --install-config-examples-if-missing
+```
+
+If a live signer host still uses legacy `keys_path` in `/etc/nxms/signer.toml`, migrate it once before starting services:
+
+```bash
+doas tools/nxms-alpine-migrate-signer-config.sh --input /etc/nxms/signer.toml --output /etc/nxms/signer.toml
 ```
 
 ## 8. Install OpenRC Units
@@ -397,7 +409,9 @@ doas chown root:nxms /etc/nxms/signer.toml
 Then edit `/etc/nxms/signer.toml` and set real values:
 - `mailbox_url = "http://<mailbox-onion>"`
 - valid `peers_path`
-- valid `keys_path`
+- valid `host_vault_dir`
+- valid `host_vault_passphrase`
+- valid `runtime_trust_bundle_path`
 - valid `db_path`
 - valid local wallet-rpc endpoint
 - valid wallet credentials
@@ -417,7 +431,7 @@ Expected ownership/modes:
 - signer `vault:` files under `/run/secrets/nxms` -> `nxms:nxms 0600`
 
 Important:
-- signer will not fully validate `sign/submit` paths without real `peers.json`, `keys.json`, action-token pubkey and local `monero-wallet-rpc`
+- signer will not fully validate `sign/submit` paths without real `peers.json`, local `host vault`, signed `runtime_trust_bundle`, action-token pubkey projection and local `monero-wallet-rpc`
 - this is expected
 
 Enable signer:

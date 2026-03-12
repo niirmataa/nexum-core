@@ -252,6 +252,11 @@ impl SignerConfig {
         {
             return Err(anyhow!("runtime_trust_bundle_path must not be empty"));
         }
+        if self.production_hardening && self.runtime_trust_bundle_path.is_none() {
+            return Err(anyhow!(
+                "production_hardening=true requires non-empty runtime_trust_bundle_path"
+            ));
+        }
         self.mailbox_url = self.mailbox_url.trim().trim_end_matches('/').to_string();
         if self.mailbox_url.is_empty() {
             return Err(anyhow!("mailbox_url must not be empty"));
@@ -1012,6 +1017,19 @@ mod tests {
             .normalize()
             .expect_err("must reject missing action token");
         assert!(err.to_string().contains("action_token"));
+    }
+
+    #[test]
+    fn production_hardening_requires_runtime_trust_bundle_path() {
+        let _guard = env_lock().lock().expect("env lock");
+        let mut cfg = base_cfg();
+        cfg.production_hardening = true;
+        let _vault = apply_production_vault_secrets(&mut cfg);
+        cfg.runtime_trust_bundle_path = None;
+        let err = cfg
+            .normalize()
+            .expect_err("must reject missing runtime_trust_bundle_path");
+        assert!(err.to_string().contains("runtime_trust_bundle_path"));
     }
 
     #[test]

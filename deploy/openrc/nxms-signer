@@ -13,7 +13,7 @@ error_log="${NXMS_SIGNER_STDERR_LOG:-/var/log/nxms/signer.err}"
 : "${NXMS_USER:=nxms}"
 : "${NXMS_GROUP:=nxms}"
 : "${NXMS_WORKDIR:=/opt/nxms}"
-: "${NXMS_SIGNER_STATE_DIR:=/var/lib/nxms/signer}"
+: "${NXMS_SIGNER_STATE_DIR:=/var/lib/nxms-signer}"
 : "${NXMS_SIGNER_CONFIG:=/etc/nxms/signer.toml}"
 : "${RUST_LOG:=info}"
 
@@ -50,8 +50,16 @@ validate_orchestrator_bridge() {
         eerror "NXMS_ORCH_BIN must point to an executable when orchestrator bridge is enabled"
         return 1
     fi
-    if [ -z "${NXMS_ORCH_DB_PATH:-}" ]; then
-        eerror "NXMS_ORCH_DB_PATH must be set when orchestrator bridge is enabled"
+    if [ -z "${NXMS_ORCH_CONFIG_PATH:-}" ]; then
+        eerror "NXMS_ORCH_CONFIG_PATH must be set when orchestrator bridge is enabled"
+        return 1
+    fi
+    if [ ! -r "${NXMS_ORCH_CONFIG_PATH}" ]; then
+        eerror "NXMS_ORCH_CONFIG_PATH must point to a readable orchestrator config"
+        return 1
+    fi
+    if ! service_can_read "${NXMS_ORCH_CONFIG_PATH}"; then
+        eerror "orchestrator config not readable by ${NXMS_USER}: ${NXMS_ORCH_CONFIG_PATH}"
         return 1
     fi
     if [ -z "${NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF:-}" ]; then
@@ -63,7 +71,7 @@ validate_orchestrator_bridge() {
 export_runtime_env() {
     export RUST_LOG
     export NXMS_ORCH_BIN
-    export NXMS_ORCH_DB_PATH
+    export NXMS_ORCH_CONFIG_PATH
     export NXMS_SIGNER_ORCH_TIMEOUT_SECS
     export NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE
     export NXMS_SIGNER_ORCH_QUORUM_PROOF_STORE_REQUIRED

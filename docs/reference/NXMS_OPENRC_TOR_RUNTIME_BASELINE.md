@@ -46,13 +46,14 @@ Scope: Alpine/OpenRC deploy baseline for the canonical `nxms-transport -> nxms-m
   Ownership baseline: `/etc/nxms/mailbox.toml` as `root:nxms 0640`, mailbox secret files as `nxms:nxms 0600`, secret directory as `root:nxms 0750`.
 - Signer:
   main secrets stay in signer TOML via `vault:` / `file:` refs.
-  Optional orchestrator bridge token, if enabled, is passed as `NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF=vault:/...`.
+  In `production_hardening`, orchestrator quorum-proof verify is part of the canonical baseline and requires `NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF=vault:/run/secrets/nxms/orch_bridge_token`.
+  Canonical orchestrator bridge routing is `NXMS_ORCH_CONFIG_PATH=/etc/nxms/orchestrator.toml`, not `NXMS_ORCH_DB_PATH`.
   Ownership baseline: `/etc/nxms/signer.toml` as `root:nxms 0640`; signer secret files referenced via `vault:` must be `nxms:nxms 0600`.
 - Monero:
   `monerod` config is plain local config at `/etc/monero/stagenet.conf` with no secrets in argv.
   `wallet-rpc` auth stays only in `/etc/monero/wallet-rpc-stagenet.conf`.
   Because Monero CLI does not support secret refs, keep that config `root:monero 0640` and never mirror `rpc-login` into OpenRC `.confd`.
-- Do not place mailbox bearer values or bridge token values directly in `.confd`.
+- Do not place mailbox bearer values directly in `.confd`.
 - Do not pass secrets in `start-stop-daemon` argv.
 
 ## OpenRC Install Shape

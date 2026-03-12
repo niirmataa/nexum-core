@@ -12,7 +12,8 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
-    ENV_ORCHESTRATOR_CONFIG_PATH, OrchestratorConfig, load_optional_orchestrator_config,
+    ENV_ORCHESTRATOR_CONFIG_PATH, ENV_ORCHESTRATOR_DB_PATH, OrchestratorConfig,
+    load_optional_orchestrator_config, resolve_orchestrator_db_path,
 };
 use crate::db::{OrchestratorDb, SubmitMultisigProofBundle};
 use crate::flow::WorkflowState;
@@ -25,9 +26,8 @@ const ENV_ACTION_TOKEN_TTL_SECS: &str = "NXMS_ORCH_ACTION_TOKEN_TTL_SECS";
 #[derive(Subcommand, Debug)]
 pub enum ActionTokenCommand {
     Issue {
-        #[arg(long, env = "NXMS_ORCH_DB_PATH")]
+        #[arg(long, env = ENV_ORCHESTRATOR_DB_PATH)]
         db_path: Option<PathBuf>,
-        #[arg(long)]
         #[arg(long, env = ENV_ORCHESTRATOR_CONFIG_PATH)]
         config_path: Option<PathBuf>,
         #[arg(long)]
@@ -362,9 +362,7 @@ fn resolve_issue_command(
                 .map(|action| action.default_ttl_secs)
         });
     }
-    let db_path = db_path
-        .or_else(|| config.map(|cfg| cfg.db_path.clone()))
-        .unwrap_or_else(|| PathBuf::from("nxms_orchestrator.db"));
+    let db_path = resolve_orchestrator_db_path(config, db_path);
     Ok((db_path, input))
 }
 

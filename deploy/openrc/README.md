@@ -11,8 +11,12 @@ Repo-managed OpenRC runtime baseline for Alpine:
 - `nxms-signer`
   Canonical signer daemon.
   Runs `nxms-signer run --config /etc/nxms/signer.toml`.
-  Signer secrets stay in TOML secret refs (`vault:` / `file:`) and optional orchestrator bridge uses `NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF`.
+  Canonical signer state dir is `/var/lib/nxms-signer`.
+  Signer secrets stay in TOML secret refs (`vault:` / `file:`).
+  In `production_hardening`, orchestrator quorum-proof verify is part of the canonical baseline and uses `NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF=vault:/run/secrets/nxms/orch_bridge_token`.
+  Canonical bridge runtime path to orchestrator is `NXMS_ORCH_CONFIG_PATH=/etc/nxms/orchestrator.toml`, not a raw DB path.
   For `vault:` refs, keep `/etc/nxms/signer.toml` readable by `nxms` (`root:nxms 0640`) and the referenced secret files `nxms:nxms 0600`.
+  Legacy signer configs using `keys_path` must be migrated before service start.
 
 - `monerod-stagenet`
   Canonical Monero daemon baseline for truthful signer runtime.

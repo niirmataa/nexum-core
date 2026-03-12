@@ -92,7 +92,7 @@ Preferred: enable client authorization (v3 auth) so only known clients can conne
 ## Signer Config
 `nxms-signer` reads TOML (`NXMS_SIGNER_CONFIG`, default `nxms-signer.toml`).
 Minimum required fields:
-- `local_id`, `peers_path`, `keys_path`, `db_path`
+- `local_id`, `peers_path`, `host_vault_dir`, `host_vault_passphrase`, `runtime_trust_bundle_path`, `db_path`
 - `signer_role`, `sandbox_id`, `wallet_id`, `nettype`
 - `mailbox_url`, `mailbox_push_token`, `mailbox_pull_token`, `mailbox_ack_token`, `worker_service_token`, `tor_socks5h`
 - `allow_remote_wallet_rpc=false` (required; remote wallet-rpc is not a supported runtime mode)
@@ -108,6 +108,7 @@ Secrets can be referenced as `vault:/path/to/secret`, `file:/path/to/secret`, or
 When `production_hardening=true`, `vault:` refs are mandatory for:
 - `mailbox_push_token`, `mailbox_pull_token`, `mailbox_ack_token` (and `mailbox_admin_token` if set),
 - `worker_service_token`,
+- `host_vault_passphrase`,
 - `wallet_rpc.wallet_password`,
 - `wallet_rpc.password`.
 Signer provisioning flow (`wallet_provision.enabled=true`) runs server-side CLI:
@@ -122,7 +123,7 @@ Cross-sandbox quorum proof bridge (signer <-> orchestrator):
   - `quorum-proof` odrzuca `--bridge-token` i akceptuje tylko `NXMS_ORCH_BRIDGE_TOKEN_INPUT`,
   - `proposal store` odrzuca inline `--tx-data-hex` i wymaga `--tx-data-hex-file`.
 - `NXMS_SIGNER_ORCH_TIMEOUT_SECS` steruje timeoutem wywołań CLI orchestratora z poziomu signera.
-- `NXMS_ORCH_BIN` i `NXMS_ORCH_DB_PATH` muszą wskazywać ten sam binary/DB co routing orchestratora.
+- `NXMS_ORCH_BIN` i `NXMS_ORCH_CONFIG_PATH` muszą wskazywać ten sam binary/config co routing orchestratora; raw `NXMS_ORCH_DB_PATH` pozostaje tylko ręcznym override/debug path.
 - `production_hardening=true` wymusza `NXMS_SIGNER_ORCH_QUORUM_PROOF_VERIFY=true` już na starcie signera (fail-fast).
 
 ## Snapshot Lifecycle
@@ -131,7 +132,7 @@ Cross-sandbox quorum proof bridge (signer <-> orchestrator):
 2. Hash:
 `nxms-signer snapshot hash --snapshot snapshot.json`
 3. Sign (each signer):
-`nxms-signer snapshot sign --snapshot snapshot.json --keys keys.json --signer-id <id> --out sig.json`
+`nxms-signer snapshot sign --config nxms-signer.toml --snapshot snapshot.json --signer-id <id> --out sig.json`
 4. Verify:
 `nxms-signer snapshot verify --snapshot snapshot.json --signature sig.json`
 5. Activate with quorum:
