@@ -1,0 +1,7 @@
+db_path = "/var/lib/nxms-orchestrator/nxms_orchestrator.db"
+runtime_trust_bundle_path = "/var/lib/nxms/bootstrap/runtime-trust.final.json"
+
+[action_token]
+issuer_vault_dir = "/var/lib/nxms/action-token-issuer-vault"
+issuer_vault_passphrase_file = "/run/nxms/action-token-issuer.passphrase"
+default_ttl_secs = 60

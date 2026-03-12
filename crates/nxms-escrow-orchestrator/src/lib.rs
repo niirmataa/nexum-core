@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod action_token;
+pub mod config;
 pub mod db;
 pub mod flow;
 pub mod tx_profile;
@@ -8,6 +9,9 @@ pub mod tx_profile;
 pub use action_token::{
     ActionTokenClaims, ActionTokenCliInput, ActionTokenCommand, ActionTokenOp, ActionTokenRole,
     IssuedActionTokenOutput, build_issue_params, handle_action_token, issue_action_token,
+};
+pub use config::{
+    ENV_ORCHESTRATOR_CONFIG_PATH, OrchestratorConfig, load_optional_orchestrator_config,
 };
 pub use db::{OrchestratorDb, SloAlertThresholds};
 

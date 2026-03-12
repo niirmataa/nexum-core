@@ -9,13 +9,13 @@ use nxms_escrow_orchestrator::{
 };
 use nxms_signer::action_token::sign_req_id;
 use nxms_signer::SignerAgent;
-use nxms_transport::ActionTokenIssuerVault;
 use nxms_transport::wire::{EscrowAction, EscrowBody, TxSignRespBody};
+use nxms_transport::ActionTokenIssuerVault;
 use tempfile::TempDir;
 
 use support::{
-    WorkspaceSignerHarness, generate_action_token_issuer_vault, policy_hash_hex,
-    stop_agent_task, txset_sha256_hex,
+    generate_action_token_issuer_vault, policy_hash_hex, stop_agent_task, txset_sha256_hex,
+    WorkspaceSignerHarness,
 };
 
 async fn transition_workflow_to_funded(db: &OrchestratorDb, escrow_id_hex: &str) -> Result<()> {
@@ -47,12 +47,10 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
     let orchestrator_db_path = orchestrator_tempdir.path().join("orchestrator.db");
     let (orchestrator_issuer_vault_dir, orchestrator_issuer_passphrase_file) =
         generate_action_token_issuer_vault(orchestrator_tempdir.path())?;
-    let orchestrator_public_key = ActionTokenIssuerVault::load(
-        &orchestrator_issuer_vault_dir,
-        "correct horse battery",
-    )?
-    .bundle()?
-    .public_key_pem;
+    let orchestrator_public_key =
+        ActionTokenIssuerVault::load(&orchestrator_issuer_vault_dir, "correct horse battery")?
+            .bundle()?
+            .public_key_pem;
     std::fs::write(
         &harness
             .cfg
@@ -97,7 +95,7 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
         runtime_trust_bundle_path: None,
         issuer_vault_dir: Some(orchestrator_issuer_vault_dir.clone()),
         issuer_vault_passphrase_file: Some(orchestrator_issuer_passphrase_file.clone()),
-        ttl_secs: 60,
+        ttl_secs: Some(60),
         subject: Some("arbiter_operator".to_string()),
         wallet_id: Some(harness.cfg.wallet_id.clone()),
         sandbox_id: Some(harness.cfg.sandbox_id.clone()),
@@ -191,7 +189,7 @@ async fn workspace_e2e_orchestrated_flow_issues_submit_token_from_control_plane(
         runtime_trust_bundle_path: None,
         issuer_vault_dir: Some(orchestrator_issuer_vault_dir),
         issuer_vault_passphrase_file: Some(orchestrator_issuer_passphrase_file),
-        ttl_secs: 60,
+        ttl_secs: Some(60),
         subject: Some("arbiter_operator".to_string()),
         wallet_id: Some(harness.cfg.wallet_id.clone()),
         sandbox_id: Some(harness.cfg.sandbox_id.clone()),

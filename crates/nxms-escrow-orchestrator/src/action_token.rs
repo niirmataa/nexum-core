@@ -11,6 +11,9 @@ use nxms_transport::trust::RuntimeTrustBundle;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::config::{
+    ENV_ORCHESTRATOR_CONFIG_PATH, OrchestratorConfig, load_optional_orchestrator_config,
+};
 use crate::db::{OrchestratorDb, SubmitMultisigProofBundle};
 use crate::flow::WorkflowState;
 
@@ -22,12 +25,11 @@ const ENV_ACTION_TOKEN_TTL_SECS: &str = "NXMS_ORCH_ACTION_TOKEN_TTL_SECS";
 #[derive(Subcommand, Debug)]
 pub enum ActionTokenCommand {
     Issue {
-        #[arg(
-            long,
-            env = "NXMS_ORCH_DB_PATH",
-            default_value = "nxms_orchestrator.db"
-        )]
-        db_path: PathBuf,
+        #[arg(long, env = "NXMS_ORCH_DB_PATH")]
+        db_path: Option<PathBuf>,
+        #[arg(long)]
+        #[arg(long, env = ENV_ORCHESTRATOR_CONFIG_PATH)]
+        config_path: Option<PathBuf>,
         #[arg(long)]
         escrow_id_hex: String,
         #[arg(long)]
@@ -44,8 +46,8 @@ pub enum ActionTokenCommand {
         issuer_vault_dir: Option<PathBuf>,
         #[arg(long, env = ENV_ACTION_TOKEN_ISSUER_VAULT_PASSPHRASE_FILE)]
         issuer_vault_passphrase_file: Option<PathBuf>,
-        #[arg(long, env = ENV_ACTION_TOKEN_TTL_SECS, default_value_t = 60)]
-        ttl_secs: u64,
+        #[arg(long, env = ENV_ACTION_TOKEN_TTL_SECS)]
+        ttl_secs: Option<u64>,
         #[arg(long)]
         subject: Option<String>,
         #[arg(long)]
@@ -173,6 +175,7 @@ pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
     match cmd {
         ActionTokenCommand::Issue {
             db_path,
+            config_path,
             escrow_id_hex,
             txset_hash_hex,
             role,
@@ -189,21 +192,27 @@ pub async fn handle_action_token(cmd: ActionTokenCommand) -> Result<()> {
             nettype,
         } => {
             crate::require_bridge_token(bridge_token.as_deref())?;
-            let params = build_issue_params(ActionTokenCliInput {
-                escrow_id_hex,
-                txset_hash_hex,
-                role,
-                op,
-                runtime_trust_bundle_path,
-                issuer_vault_dir,
-                issuer_vault_passphrase_file,
-                ttl_secs,
-                subject,
-                wallet_id,
-                sandbox_id,
-                audience,
-                nettype,
-            })?;
+            let config = load_optional_orchestrator_config(config_path)?;
+            let (db_path, input) = resolve_issue_command(
+                config.as_ref(),
+                ActionTokenCliInput {
+                    escrow_id_hex,
+                    txset_hash_hex,
+                    role,
+                    op,
+                    runtime_trust_bundle_path,
+                    issuer_vault_dir,
+                    issuer_vault_passphrase_file,
+                    ttl_secs,
+                    subject,
+                    wallet_id,
+                    sandbox_id,
+                    audience,
+                    nettype,
+                },
+                db_path,
+            )?;
+            let params = build_issue_params(input)?;
             let db = OrchestratorDb::new(db_path);
             db.init().await?;
             let out = issue_action_token(&db, &params).await?;
@@ -222,7 +231,7 @@ pub struct ActionTokenCliInput {
     pub runtime_trust_bundle_path: Option<PathBuf>,
     pub issuer_vault_dir: Option<PathBuf>,
     pub issuer_vault_passphrase_file: Option<PathBuf>,
-    pub ttl_secs: u64,
+    pub ttl_secs: Option<u64>,
     pub subject: Option<String>,
     pub wallet_id: Option<String>,
     pub sandbox_id: Option<String>,
@@ -238,10 +247,8 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
         .transpose()?;
     let escrow_id_hex = normalize_hex_exact(&input.escrow_id_hex, 32, "escrow_id_hex")?;
     let txset_hash_hex = normalize_hex_exact(&input.txset_hash_hex, 64, "txset_hash_hex")?;
-    let issuer_vault = load_action_token_issuer_vault(
-        input.issuer_vault_dir,
-        input.issuer_vault_passphrase_file,
-    )?;
+    let issuer_vault =
+        load_action_token_issuer_vault(input.issuer_vault_dir, input.issuer_vault_passphrase_file)?;
     let issuer_bundle = issuer_vault.bundle()?;
     let issuer = issuer_bundle.issuer.clone();
     let algorithm = parse_algorithm(&issuer_bundle.algorithm)?;
@@ -271,13 +278,13 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
         Algorithm::ES256 => EncodingKey::from_ec_pem(issuer_vault.private_key_pem().as_bytes())?,
         _ => bail!("unsupported JWT algorithm for action token issuer"),
     };
-    if input.ttl_secs == 0 {
+    let ttl_secs = input.ttl_secs.unwrap_or(60);
+    if ttl_secs == 0 {
         bail!("ttl_secs must be > 0");
     }
-    if input.ttl_secs > 120 {
+    if ttl_secs > 120 {
         bail!("ttl_secs exceeds hard limit (120s)");
     }
-    let ttl_secs = input.ttl_secs;
 
     let role = input.role;
     let subject = normalize_non_empty(
@@ -323,6 +330,42 @@ pub fn build_issue_params(input: ActionTokenCliInput) -> Result<IssueActionToken
         nettype,
         runtime_trust_epoch: runtime_trust_bundle.map(|bundle| bundle.trust_epoch),
     })
+}
+
+fn resolve_issue_command(
+    config: Option<&OrchestratorConfig>,
+    mut input: ActionTokenCliInput,
+    db_path: Option<PathBuf>,
+) -> Result<(PathBuf, ActionTokenCliInput)> {
+    if input.runtime_trust_bundle_path.is_none() {
+        input.runtime_trust_bundle_path =
+            config.and_then(|cfg| cfg.runtime_trust_bundle_path.clone());
+    }
+    if input.issuer_vault_dir.is_none() {
+        input.issuer_vault_dir = config.and_then(|cfg| {
+            cfg.action_token
+                .as_ref()
+                .map(|action| action.issuer_vault_dir.clone())
+        });
+    }
+    if input.issuer_vault_passphrase_file.is_none() {
+        input.issuer_vault_passphrase_file = config.and_then(|cfg| {
+            cfg.action_token
+                .as_ref()
+                .map(|action| action.issuer_vault_passphrase_file.clone())
+        });
+    }
+    if input.ttl_secs.is_none() {
+        input.ttl_secs = config.and_then(|cfg| {
+            cfg.action_token
+                .as_ref()
+                .map(|action| action.default_ttl_secs)
+        });
+    }
+    let db_path = db_path
+        .or_else(|| config.map(|cfg| cfg.db_path.clone()))
+        .unwrap_or_else(|| PathBuf::from("nxms_orchestrator.db"));
+    Ok((db_path, input))
 }
 
 pub async fn issue_action_token(
@@ -402,7 +445,9 @@ async fn build_claims(
         proof_seller_req_id: None,
     };
 
-    let admission = db.get_escrow_admission_artifact(&params.escrow_id_hex).await?;
+    let admission = db
+        .get_escrow_admission_artifact(&params.escrow_id_hex)
+        .await?;
     if let Some(admission) = admission {
         if admission.snapshot_hash_hex != claims.snapshot_hash {
             bail!("escrow admission snapshot_hash mismatch against workflow");
@@ -686,6 +731,7 @@ fn validate_owner_only_file(_path: &Path, metadata: &std::fs::Metadata, label: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ActionTokenRuntimeConfig;
     use crate::db::OrchestratorDb;
     use crate::flow::WorkflowState;
     use jsonwebtoken::{DecodingKey, Validation, decode};
@@ -735,9 +781,13 @@ mod tests {
         let pass_path = dir.join("run/passphrase");
         let vault_dir = dir.join("vault");
         write_owner_only_secret(&pass_path, "correct horse battery");
-        let vault =
-            ActionTokenIssuerVault::generate(&vault_dir, "correct horse battery", "nxms-auth", "EDDSA")
-                .expect("generate issuer vault");
+        let vault = ActionTokenIssuerVault::generate(
+            &vault_dir,
+            "correct horse battery",
+            "nxms-auth",
+            "EDDSA",
+        )
+        .expect("generate issuer vault");
         (vault_dir, pass_path, vault)
     }
 
@@ -856,9 +906,7 @@ mod tests {
         assert!(claims.proof_arbiter_jti.is_none());
         assert!(claims.proof_seller_jti.is_none());
         assert_ne!(claims.jti.trim(), "");
-        let _ = std::fs::remove_dir_all(
-            vault_dir.parent().expect("vault dir parent cleanup"),
-        );
+        let _ = std::fs::remove_dir_all(vault_dir.parent().expect("vault dir parent cleanup"));
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -919,9 +967,7 @@ mod tests {
             claims.proof_seller_req_id.as_deref(),
             Some(expected_seller_req.as_str())
         );
-        let _ = std::fs::remove_dir_all(
-            vault_dir.parent().expect("vault dir parent cleanup"),
-        );
+        let _ = std::fs::remove_dir_all(vault_dir.parent().expect("vault dir parent cleanup"));
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -954,7 +1000,7 @@ mod tests {
             runtime_trust_bundle_path: None,
             issuer_vault_dir: Some(vault_dir.clone()),
             issuer_vault_passphrase_file: Some(pass_path),
-            ttl_secs: 121,
+            ttl_secs: Some(121),
             subject: Some("seller-op".to_string()),
             wallet_id: Some("wallet-seller".to_string()),
             sandbox_id: Some("sbx-1".to_string()),
@@ -966,5 +1012,109 @@ mod tests {
         };
         assert!(err.to_string().contains("ttl_secs exceeds hard limit"));
         let _ = std::fs::remove_dir_all(vault_dir.parent().expect("cleanup dir"));
+    }
+
+    #[test]
+    fn resolve_issue_command_uses_config_runtime_inputs() {
+        let cfg = OrchestratorConfig {
+            db_path: PathBuf::from("/var/lib/nxms/orchestrator.db"),
+            runtime_trust_bundle_path: Some(PathBuf::from(
+                "/var/lib/nxms/bootstrap/runtime-trust.final.json",
+            )),
+            action_token: Some(ActionTokenRuntimeConfig {
+                issuer_vault_dir: PathBuf::from("/var/lib/nxms/action-token-issuer-vault"),
+                issuer_vault_passphrase_file: PathBuf::from(
+                    "/run/nxms/action-token-issuer.passphrase",
+                ),
+                default_ttl_secs: 75,
+            }),
+        };
+        let (db_path, resolved) = resolve_issue_command(
+            Some(&cfg),
+            ActionTokenCliInput {
+                escrow_id_hex: "00112233445566778899aabbccddeeff".to_string(),
+                txset_hash_hex: "aa".repeat(32),
+                role: ActionTokenRole::Seller,
+                op: ActionTokenOp::SignMultisig,
+                runtime_trust_bundle_path: None,
+                issuer_vault_dir: None,
+                issuer_vault_passphrase_file: None,
+                ttl_secs: None,
+                subject: Some("seller-op".to_string()),
+                wallet_id: Some("wallet-seller".to_string()),
+                sandbox_id: Some("sbx-1".to_string()),
+                audience: Some("sandbox:sbx-1".to_string()),
+                nettype: Some("stagenet".to_string()),
+            },
+            None,
+        )
+        .expect("resolve");
+        assert_eq!(db_path, PathBuf::from("/var/lib/nxms/orchestrator.db"));
+        assert_eq!(
+            resolved.runtime_trust_bundle_path,
+            Some(PathBuf::from(
+                "/var/lib/nxms/bootstrap/runtime-trust.final.json"
+            ))
+        );
+        assert_eq!(
+            resolved.issuer_vault_dir,
+            Some(PathBuf::from("/var/lib/nxms/action-token-issuer-vault"))
+        );
+        assert_eq!(
+            resolved.issuer_vault_passphrase_file,
+            Some(PathBuf::from("/run/nxms/action-token-issuer.passphrase"))
+        );
+        assert_eq!(resolved.ttl_secs, Some(75));
+    }
+
+    #[test]
+    fn resolve_issue_command_prefers_cli_over_config() {
+        let cfg = OrchestratorConfig {
+            db_path: PathBuf::from("/var/lib/nxms/orchestrator.db"),
+            runtime_trust_bundle_path: Some(PathBuf::from(
+                "/var/lib/nxms/bootstrap/from-config.json",
+            )),
+            action_token: Some(ActionTokenRuntimeConfig {
+                issuer_vault_dir: PathBuf::from("/var/lib/nxms/action-token-issuer-vault"),
+                issuer_vault_passphrase_file: PathBuf::from(
+                    "/run/nxms/action-token-issuer.passphrase",
+                ),
+                default_ttl_secs: 75,
+            }),
+        };
+        let (db_path, resolved) = resolve_issue_command(
+            Some(&cfg),
+            ActionTokenCliInput {
+                escrow_id_hex: "00112233445566778899aabbccddeeff".to_string(),
+                txset_hash_hex: "aa".repeat(32),
+                role: ActionTokenRole::Seller,
+                op: ActionTokenOp::SignMultisig,
+                runtime_trust_bundle_path: Some(PathBuf::from("/tmp/from-cli.json")),
+                issuer_vault_dir: Some(PathBuf::from("/tmp/issuer-vault")),
+                issuer_vault_passphrase_file: Some(PathBuf::from("/tmp/issuer.passphrase")),
+                ttl_secs: Some(61),
+                subject: Some("seller-op".to_string()),
+                wallet_id: Some("wallet-seller".to_string()),
+                sandbox_id: Some("sbx-1".to_string()),
+                audience: Some("sandbox:sbx-1".to_string()),
+                nettype: Some("stagenet".to_string()),
+            },
+            Some(PathBuf::from("/tmp/orchestrator.db")),
+        )
+        .expect("resolve");
+        assert_eq!(db_path, PathBuf::from("/tmp/orchestrator.db"));
+        assert_eq!(
+            resolved.runtime_trust_bundle_path,
+            Some(PathBuf::from("/tmp/from-cli.json"))
+        );
+        assert_eq!(
+            resolved.issuer_vault_dir,
+            Some(PathBuf::from("/tmp/issuer-vault"))
+        );
+        assert_eq!(
+            resolved.issuer_vault_passphrase_file,
+            Some(PathBuf::from("/tmp/issuer.passphrase"))
+        );
+        assert_eq!(resolved.ttl_secs, Some(61));
     }
 }

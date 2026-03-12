@@ -1,24 +1,24 @@
 mod support;
 
-use std::sync::Arc;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use nxms_escrow_orchestrator::{
-    ActionTokenCliInput, ActionTokenOp, ActionTokenRole, OrchestratorDb, build_issue_params,
-    db::EscrowAdmissionArtifactRow, flow::WorkflowState, issue_action_token,
+    build_issue_params, db::EscrowAdmissionArtifactRow, flow::WorkflowState, issue_action_token,
+    ActionTokenCliInput, ActionTokenOp, ActionTokenRole, OrchestratorDb,
 };
 use nxms_signer::trust::materialize_runtime_trust_from_config;
 use nxms_signer::{SignerAgent, SignerConfig};
 use nxms_transport::admission::EscrowAdmissionArtifact;
-use nxms_transport::ActionTokenIssuerVault;
 use nxms_transport::wire::{EscrowAction, EscrowBody, TxSignRespBody};
+use nxms_transport::ActionTokenIssuerVault;
 use tempfile::TempDir;
 
 use support::{
-    WorkspaceSignerHarness, generate_action_token_issuer_vault, policy_hash_hex,
-    stop_agent_task, txset_sha256_hex, write_runtime_trust_bundle,
+    generate_action_token_issuer_vault, policy_hash_hex, stop_agent_task, txset_sha256_hex,
+    write_runtime_trust_bundle, WorkspaceSignerHarness,
 };
 
 async fn setup_runtime_trust_agent_with_action_key(
@@ -140,13 +140,14 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
     let orchestrator_public_key_path = orchestrator_tempdir
         .path()
         .join("orch_action_token_ed25519.pub.pem");
-    let orchestrator_public_key = ActionTokenIssuerVault::load(
-        &orchestrator_issuer_vault_dir,
-        "correct horse battery",
-    )?
-    .bundle()?
-    .public_key_pem;
-    std::fs::write(&orchestrator_public_key_path, orchestrator_public_key.as_bytes())?;
+    let orchestrator_public_key =
+        ActionTokenIssuerVault::load(&orchestrator_issuer_vault_dir, "correct horse battery")?
+            .bundle()?
+            .public_key_pem;
+    std::fs::write(
+        &orchestrator_public_key_path,
+        orchestrator_public_key.as_bytes(),
+    )?;
 
     let (harness, cfg, trust_epoch) =
         setup_runtime_trust_agent_with_action_key(&orchestrator_public_key_path).await?;
@@ -171,7 +172,6 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
         &trust_epoch,
     )?;
     let admission_hash = admission.hash_hex()?;
-
 
     let orchestrator_db = OrchestratorDb::new(orchestrator_db_path);
     orchestrator_db.init().await?;
@@ -207,7 +207,7 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
         runtime_trust_bundle_path: Some(bundle_path.clone()),
         issuer_vault_dir: Some(orchestrator_issuer_vault_dir.clone()),
         issuer_vault_passphrase_file: Some(orchestrator_issuer_passphrase_file.clone()),
-        ttl_secs: 60,
+        ttl_secs: Some(60),
         subject: Some("arbiter_operator".to_string()),
         wallet_id: Some(harness.cfg.wallet_id.clone()),
         sandbox_id: Some(harness.cfg.sandbox_id.clone()),
@@ -215,7 +215,10 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
         nettype: Some(harness.cfg.nettype.clone()),
     })?;
     let issued_sign = issue_action_token(&orchestrator_db, &issue_sign).await?;
-    assert_eq!(issued_sign.claims.runtime_trust_epoch.as_deref(), Some(trust_epoch.as_str()));
+    assert_eq!(
+        issued_sign.claims.runtime_trust_epoch.as_deref(),
+        Some(trust_epoch.as_str())
+    );
     assert_eq!(
         issued_sign.claims.escrow_admission_hash.as_deref(),
         Some(admission_hash.as_str())
@@ -297,7 +300,7 @@ async fn workspace_e2e_escrow_admission_orchestrated_sign_and_submit() -> Result
         runtime_trust_bundle_path: Some(bundle_path),
         issuer_vault_dir: Some(orchestrator_issuer_vault_dir),
         issuer_vault_passphrase_file: Some(orchestrator_issuer_passphrase_file),
-        ttl_secs: 60,
+        ttl_secs: Some(60),
         subject: Some("arbiter_operator".to_string()),
         wallet_id: Some(harness.cfg.wallet_id.clone()),
         sandbox_id: Some(harness.cfg.sandbox_id.clone()),
@@ -342,13 +345,19 @@ async fn workspace_e2e_escrow_admission_missing_from_ingress_rejects_pending() -
     let mut rejected = false;
     while tokio::time::Instant::now() < deadline {
         let audit = harness.db.list_audit_logs(50).await?;
-        if audit.iter().any(|row| row.event_kind == "tx_sign_req_rejected") {
+        if audit
+            .iter()
+            .any(|row| row.event_kind == "tx_sign_req_rejected")
+        {
             rejected = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    assert!(rejected, "tx_sign_req without admission artifact must be rejected");
+    assert!(
+        rejected,
+        "tx_sign_req without admission artifact must be rejected"
+    );
     assert!(harness.db.list_pending().await?.is_empty());
 
     stop_agent_task(agent_task).await;
