@@ -7,6 +7,7 @@ description = "NXMS escrow workflow orchestrator (production flow state + outbox
 
 [dependencies]
 anyhow = "1"
+blake3 = "1.5"
 clap = { version = "4.5", features = ["derive", "env"] }
 hex = "0.4"
 http = "1"
@@ -14,11 +15,13 @@ jsonwebtoken = "9"
 libc = "0.2"
 md5 = "0.7"
 nxms-transport = { path = "../nxms-transport" }
+privai-chain = { path = "../../../privAI/privai-chain" }
 rand = "0.8"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha3 = "0.10"
+thiserror = "1.0"
 tokio = { version = "1.43", features = ["macros", "rt-multi-thread", "signal", "time"] }
 toml = "0.8"
 tracing = "0.1"

@@ -88,6 +88,7 @@ pub fn expected_msg_type_for_state(state: WorkflowState) -> Option<&'static str>
         MakeCollected => Some("make_info"),
         ExchangeR1Collected => Some("exchange_round1"),
         ExchangeR2Collected => Some("exchange_round2"),
+        Funded => Some("escrow_funded"),
         TxSignPending => Some("tx_sign_req"),
         TxSignedQuorum => Some("tx_sign_resp"),
         _ => None,

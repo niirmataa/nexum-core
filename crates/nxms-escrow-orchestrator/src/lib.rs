@@ -4,6 +4,7 @@ pub mod action_token;
 pub mod config;
 pub mod db;
 pub mod flow;
+pub mod operator_escrow;
 pub mod tx_profile;
 
 pub use action_token::{
