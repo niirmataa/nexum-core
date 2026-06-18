@@ -9,7 +9,7 @@ struct VaultKey: Codable, Identifiable {
     let keyEncryptionKeyId: String
     let createdAt: Date
     let deviceName: String
-    
+
     var publicKeyData: Data? {
         Data(base64urlEncoded: publicKeyBase64url)
     }
@@ -34,7 +34,7 @@ extension Data {
         }
         self.init(base64Encoded: base64)
     }
-    
+
     var base64urlEncodedString: String {
         base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")

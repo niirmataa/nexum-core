@@ -4,7 +4,7 @@ struct ScanChallengeView: View {
     @EnvironmentObject var vaultStore: VaultStore
     @EnvironmentObject var auditLog: AuditLogStore
     @Environment(\.dismiss) var dismiss
-    
+
     @StateObject private var scanner = QRScanner()
     @State private var challenge: NexumChallenge?
     @State private var showReview = false
@@ -12,7 +12,7 @@ struct ScanChallengeView: View {
     @State private var errorMessage = ""
     @State private var manualInput = ""
     @State private var showManualInput = false
-    
+
     var body: some View {
         NavigationStack {
             VStack {
@@ -35,9 +35,9 @@ struct ScanChallengeView: View {
                             }
                         }
                         .buttonStyle(.borderedProminent)
-                        
+
                         Divider()
-                        
+
                         Button("Paste JSON Manually") {
                             showManualInput = true
                         }
@@ -65,7 +65,7 @@ struct ScanChallengeView: View {
                     ZStack {
                         ScannerView(scanner: scanner)
                             .ignoresSafeArea()
-                        
+
                         VStack {
                             Spacer()
                             VStack(spacing: 12) {
@@ -129,7 +129,7 @@ struct ScanChallengeView: View {
             }
         }
     }
-    
+
     private func parseChallenge(_ input: String) {
         do {
             let parsed = try ChallengeParser.parse(qrContent: input)

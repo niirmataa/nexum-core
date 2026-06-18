@@ -10,13 +10,13 @@ public struct FalconKeyPair: Sendable {
     public let publicKey: Data
     public let privateKey: Data
     public let algorithm: String
-    
+
     public init(publicKey: Data, privateKey: Data, algorithm: String) {
         self.publicKey = publicKey
         self.privateKey = privateKey
         self.algorithm = algorithm
     }
-    
+
     public var publicKeyBase64url: String {
         publicKey.base64urlEncodedString
     }
@@ -25,16 +25,16 @@ public struct FalconKeyPair: Sendable {
 public struct FalconSignature: Sendable {
     public let signature: Data
     public let nonce: Data
-    
+
     public init(signature: Data, nonce: Data) {
         self.signature = signature
         self.nonce = nonce
     }
-    
+
     public var signatureBase64url: String {
         signature.base64urlEncodedString
     }
-    
+
     public var nonceBase64url: String {
         nonce.base64urlEncodedString
     }
@@ -50,7 +50,7 @@ public enum FalconError: Error, LocalizedError {
     case signingFailed
     case verificationFailed
     case bridgeError(String)
-    
+
     public var errorDescription: String? {
         switch self {
         case .invalidParameter(let msg): return "Invalid parameter: \(msg)"
@@ -74,9 +74,9 @@ public protocol FalconBridgeProtocol {
 
 public final class FalconBridgeMock: FalconBridgeProtocol {
     public var shouldFail = false
-    
+
     public init() {}
-    
+
     public func keygen(logn: UInt, compression: Int32) throws -> (publicKey: Data, privateKey: Data) {
         if shouldFail { throw FalconError.keyGenerationFailed }
         let pubSize = 897
@@ -87,7 +87,7 @@ public final class FalconBridgeMock: FalconBridgeProtocol {
         for i in 0..<privSize { priv[i] = UInt8((i &+ 128) % 256) }
         return (publicKey: pub, privateKey: priv)
     }
-    
+
     public func sign(message: Data, privateKey: Data, compression: Int32) throws -> (signature: Data, nonce: Data) {
         if shouldFail { throw FalconError.signingFailed }
         var sig = Data(count: 667)
@@ -96,7 +96,7 @@ public final class FalconBridgeMock: FalconBridgeProtocol {
         for i in 0..<40 { nonce[i] = UInt8((i &+ 200) % 256) }
         return (signature: sig, nonce: nonce)
     }
-    
+
     public func verify(message: Data, signature: Data, nonce: Data, publicKey: Data) throws -> Bool {
         if shouldFail { throw FalconError.verificationFailed }
         return true
@@ -105,11 +105,11 @@ public final class FalconBridgeMock: FalconBridgeProtocol {
 
 public final class FalconCrypto: FalconCryptoProtocol {
     private let bridge: FalconBridgeProtocol
-    
+
     public init(bridge: FalconBridgeProtocol = FalconBridgeMock()) {
         self.bridge = bridge
     }
-    
+
     public func generateKeyPair(logn: UInt = 10) throws -> FalconKeyPair {
         guard logn >= 1 && logn <= 10 else {
             throw FalconError.invalidParameter("logn must be 1-10")
@@ -124,7 +124,7 @@ public final class FalconCrypto: FalconCryptoProtocol {
             algorithm: "Falcon-\(1 << logn)"
         )
     }
-    
+
     public func sign(message: Data, privateKey: Data) throws -> FalconSignature {
         guard !privateKey.isEmpty else {
             throw FalconError.noPrivateKey
@@ -135,7 +135,7 @@ public final class FalconCrypto: FalconCryptoProtocol {
         }
         return FalconSignature(signature: result.signature, nonce: result.nonce)
     }
-    
+
     public func verify(message: Data, signature: Data, nonce: Data, publicKey: Data) throws -> Bool {
         guard !publicKey.isEmpty else { throw FalconError.noPublicKey }
         guard !signature.isEmpty else { throw FalconError.noSignature }

@@ -13,11 +13,11 @@ struct NexumChallenge: Codable {
     let callbackUrl: String?
     let payloadHash: String?
     let display: ChallengeDisplay?
-    
+
     var isExpired: Bool {
         Date() > expiresAt
     }
-    
+
     var fingerprint: String {
         var dict: [String: Any] = [
             "challengeId": challengeId,

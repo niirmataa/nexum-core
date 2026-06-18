@@ -2,7 +2,7 @@ import XCTest
 @testable import NexumVault
 
 final class ChallengeParserTests: XCTestCase {
-    
+
     func testValidChallenge() throws {
         let json = """
         {
@@ -23,7 +23,7 @@ final class ChallengeParserTests: XCTestCase {
         XCTAssertEqual(challenge.challengeId, "ch_01TEST123")
         XCTAssertEqual(challenge.origin, "https://igrowpro.pl")
     }
-    
+
     func testInvalidVersion() {
         let json = """
         {
@@ -49,7 +49,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testInvalidType() {
         let json = """
         {
@@ -71,7 +71,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testMissingChallengeIdPrefix() {
         let json = """
         {
@@ -93,7 +93,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testExpiredChallenge() {
         let json = """
         {
@@ -115,7 +115,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testInsecureOrigin() {
         let json = """
         {
@@ -137,7 +137,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testInvalidTimeRange() {
         let json = """
         {
@@ -159,7 +159,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testMissingNonce() {
         let json = """
         {
@@ -181,7 +181,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testAllPurposes() throws {
         for purpose in ["login", "checkout", "escrow", "message"] {
             let json = """
@@ -200,7 +200,7 @@ final class ChallengeParserTests: XCTestCase {
             XCTAssertEqual(challenge.purpose.rawValue, purpose)
         }
     }
-    
+
     func testChallengeWithDisplay() throws {
         let json = """
         {

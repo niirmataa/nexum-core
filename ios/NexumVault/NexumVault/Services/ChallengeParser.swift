@@ -6,14 +6,14 @@ enum ChallengeParser {
         d.dateDecodingStrategy = .iso8601
         return d
     }()
-    
+
     static func parse(qrContent: String) throws -> NexumChallenge {
         guard let data = qrContent.data(using: .utf8) else {
             throw ChallengeParserError.invalidEncoding
         }
         return try parse(data: data)
     }
-    
+
     static func parse(data: Data) throws -> NexumChallenge {
         let challenge: NexumChallenge
         do {
@@ -21,46 +21,46 @@ enum ChallengeParser {
         } catch {
             throw ChallengeParserError.decodingFailed(error.localizedDescription)
         }
-        
+
         try validate(challenge)
         return challenge
     }
-    
+
     static func validate(_ challenge: NexumChallenge) throws {
         guard challenge.version == 1 else {
             throw ChallengeParserError.unsupportedVersion(challenge.version)
         }
-        
+
         guard challenge.type == "nexum.challenge" else {
             throw ChallengeParserError.invalidType(challenge.type)
         }
-        
+
         guard !challenge.challengeId.isEmpty, challenge.challengeId.count <= 64 else {
             throw ChallengeParserError.invalidChallengeId
         }
-        
+
         guard challenge.challengeId.hasPrefix("ch_") else {
             throw ChallengeParserError.invalidChallengeId
         }
-        
+
         guard !challenge.nonce.isEmpty else {
             throw ChallengeParserError.missingNonce
         }
-        
+
         guard challenge.issuedAt < challenge.expiresAt else {
             throw ChallengeParserError.invalidTimeRange
         }
-        
+
         guard let originURL = URL(string: challenge.origin),
               originURL.scheme == "https" else {
             throw ChallengeParserError.insecureOrigin(challenge.origin)
         }
-        
+
         if challenge.isExpired {
             throw ChallengeParserError.challengeExpired
         }
     }
-    
+
     static func isKnownOrigin(_ origin: String, knownOrigins: Set<String>) -> Bool {
         knownOrigins.contains(origin)
     }
@@ -77,7 +77,7 @@ enum ChallengeParserError: Error, LocalizedError {
     case insecureOrigin(String)
     case challengeExpired
     case unknownOrigin(String)
-    
+
     var errorDescription: String? {
         switch self {
         case .invalidEncoding: return "QR content is not valid UTF-8"

@@ -6,14 +6,14 @@ public enum ChallengeParser {
         d.dateDecodingStrategy = .iso8601
         return d
     }()
-    
+
     public static func parse(qrContent: String) throws -> NexumChallenge {
         guard let data = qrContent.data(using: .utf8) else {
             throw ChallengeParserError.invalidEncoding
         }
         return try parse(data: data)
     }
-    
+
     public static func parse(data: Data) throws -> NexumChallenge {
         let challenge: NexumChallenge
         do {
@@ -24,7 +24,7 @@ public enum ChallengeParser {
         try validate(challenge)
         return challenge
     }
-    
+
     public static func validate(_ challenge: NexumChallenge) throws {
         guard challenge.version == 1 else {
             throw ChallengeParserError.unsupportedVersion(challenge.version)
@@ -52,7 +52,7 @@ public enum ChallengeParser {
             throw ChallengeParserError.challengeExpired
         }
     }
-    
+
     public static func isKnownOrigin(_ origin: String, knownOrigins: Set<String>) -> Bool {
         knownOrigins.contains(origin)
     }
@@ -69,7 +69,7 @@ public enum ChallengeParserError: Error, LocalizedError {
     case insecureOrigin(String)
     case challengeExpired
     case unknownOrigin(String)
-    
+
     public var errorDescription: String? {
         switch self {
         case .invalidEncoding: return "QR content is not valid UTF-8"

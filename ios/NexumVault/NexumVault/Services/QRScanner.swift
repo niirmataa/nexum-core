@@ -5,9 +5,9 @@ final class QRScanner: NSObject, ObservableObject {
     @Published var scannedCode: String?
     @Published var isScanning = false
     @Published var permissionDenied = false
-    
+
     var session: AVCaptureSession?
-    
+
     func requestPermissionAndStart() {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
@@ -28,27 +28,27 @@ final class QRScanner: NSObject, ObservableObject {
             break
         }
     }
-    
+
     func startScanning() {
         let session = AVCaptureSession()
-        
+
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device) else {
             return
         }
-        
+
         guard session.canAddInput(input) else { return }
         session.addInput(input)
-        
+
         let output = AVCaptureMetadataOutput()
         guard session.canAddOutput(output) else { return }
         session.addOutput(output)
-        
+
         output.setMetadataObjectsDelegate(self, queue: .main)
         output.metadataObjectTypes = [.qr]
-        
+
         self.session = session
-        
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             session.startRunning()
             DispatchQueue.main.async {
@@ -56,7 +56,7 @@ final class QRScanner: NSObject, ObservableObject {
             }
         }
     }
-    
+
     func stopScanning() {
         session?.stopRunning()
         session = nil
@@ -73,7 +73,7 @@ extension QRScanner: AVCaptureMetadataOutputObjectsDelegate {
         guard let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
               object.type == .qr,
               let value = object.stringValue else { return }
-        
+
         scannedCode = value
         stopScanning()
     }
@@ -81,13 +81,13 @@ extension QRScanner: AVCaptureMetadataOutputObjectsDelegate {
 
 struct ScannerView: UIViewRepresentable {
     @ObservedObject var scanner: QRScanner
-    
+
     func makeUIView(context: Context) -> PreviewUIView {
         let view = PreviewUIView()
         view.backgroundColor = .black
         return view
     }
-    
+
     func updateUIView(_ uiView: PreviewUIView, context: Context) {
         if let session = scanner.session,
            uiView.previewLayer.session !== session {
@@ -103,11 +103,11 @@ final class PreviewUIView: UIView {
     override class var layerClass: AnyClass {
         AVCaptureVideoPreviewLayer.self
     }
-    
+
     var previewLayer: AVCaptureVideoPreviewLayer {
         layer as! AVCaptureVideoPreviewLayer
     }
-    
+
     override func layoutSubviews() {
         super.layoutSubviews()
         previewLayer.frame = bounds

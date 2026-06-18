@@ -9,7 +9,7 @@ public struct VaultKey: Codable, Identifiable, Sendable {
     public let keyEncryptionKeyId: String
     public let createdAt: Date
     public let deviceName: String
-    
+
     public init(
         id: String,
         keyId: String,
@@ -29,7 +29,7 @@ public struct VaultKey: Codable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.deviceName = deviceName
     }
-    
+
     public var publicKeyData: Data? {
         Data(base64urlEncoded: publicKeyBase64url)
     }
@@ -46,7 +46,7 @@ extension Data {
         }
         self.init(base64Encoded: base64)
     }
-    
+
     public var base64urlEncodedString: String {
         base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")

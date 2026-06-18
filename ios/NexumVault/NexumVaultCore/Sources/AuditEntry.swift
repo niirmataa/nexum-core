@@ -9,7 +9,7 @@ public struct AuditEntry: Codable, Identifiable, Sendable {
     public let keyId: String
     public let status: AuditStatus
     public let deviceName: String
-    
+
     public init(
         id: UUID = UUID(),
         signedAt: Date = Date(),
@@ -45,7 +45,7 @@ public struct VaultBackup: Codable, Sendable {
     public let exportedAt: Date
     public let keys: [VaultKey]
     public let auditLog: [AuditEntry]
-    
+
     public init(version: Int, exportedAt: Date, keys: [VaultKey], auditLog: [AuditEntry]) {
         self.version = version
         self.exportedAt = exportedAt

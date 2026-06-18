@@ -9,12 +9,12 @@ enum CanonicalJSON {
         }
         return string
     }
-    
+
     static func canonicalizeData(_ object: Any) throws -> Data {
         let sorted = try sortKeys(object)
         return try JSONSerialization.data(withJSONObject: sorted, options: [])
     }
-    
+
     private static func sortKeys(_ object: Any) throws -> Any {
         if let dict = object as? [String: Any] {
             let sortedKeys = dict.keys.sorted()
@@ -33,7 +33,7 @@ enum CanonicalJSON {
             throw CanonicalJSONError.unsupportedType(String(describing: type(of: object)))
         }
     }
-    
+
     static func canonicalize(_ jsonString: String) throws -> String {
         guard let data = jsonString.data(using: .utf8) else {
             throw CanonicalJSONError.invalidInput
@@ -41,7 +41,7 @@ enum CanonicalJSON {
         let parsed = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
         return try canonicalize(parsed)
     }
-    
+
     static func canonicalizeData(_ jsonString: String) throws -> Data {
         guard let data = jsonString.data(using: .utf8) else {
             throw CanonicalJSONError.invalidInput
@@ -55,7 +55,7 @@ enum CanonicalJSONError: Error, LocalizedError {
     case encodingFailed
     case unsupportedType(String)
     case invalidInput
-    
+
     var errorDescription: String? {
         switch self {
         case .encodingFailed:

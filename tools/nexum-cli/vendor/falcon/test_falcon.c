@@ -2191,7 +2191,7 @@ mk_rand_poly(prng *p, fpr *f, unsigned logn)
 	n = (size_t)1 << logn;
 	for (u = 0; u < n; u ++) {
 		int32_t x;
-		
+
 		x = falcon_prng_get_u8(p);
 		x = (x << 8) + falcon_prng_get_u8(p);
 		x &= 0x3FF;
@@ -2366,7 +2366,7 @@ mk_rand_poly3(prng *p, fpr *f, unsigned logn, unsigned full)
 	n = (size_t)(1 + (full << 1)) << (logn - full);
 	for (u = 0; u < n; u ++) {
 		int32_t x;
-		
+
 		x = falcon_prng_get_u8(p);
 		x = (x << 8) + falcon_prng_get_u8(p);
 		x &= 0x3FF;

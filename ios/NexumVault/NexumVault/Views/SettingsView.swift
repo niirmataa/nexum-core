@@ -4,7 +4,7 @@ struct SettingsView: View {
     @EnvironmentObject var vaultStore: VaultStore
     @EnvironmentObject var auditLog: AuditLogStore
     @Environment(\.dismiss) var dismiss
-    
+
     @State private var showDeleteConfirmation = false
     @State private var exportedData: Data?
     @State private var showExportSheet = false
@@ -14,24 +14,24 @@ struct SettingsView: View {
     @State private var backupPassphrase = ""
     @State private var backupPassphraseConfirm = ""
     @State private var exportMode: ExportMode = .plain
-    
+
     enum ExportMode {
         case plain
         case encrypted
     }
-    
+
     var body: some View {
         NavigationStack {
             List {
                 Section("Vault") {
                     LabeledContent("Keys", value: "\(vaultStore.keys.count)")
-                    
+
                     if let key = vaultStore.keys.first {
                         LabeledContent("Primary Key", value: key.keyId)
                         LabeledContent("Algorithm", value: key.algorithm)
                     }
                 }
-                
+
                 Section("Security") {
                     Label("Private keys encrypted in Keychain", systemImage: "lock.shield.fill")
                     Label("kSecAttrAccessibleWhenUnlockedThisDeviceOnly", systemImage: "lock.iphone")
@@ -40,41 +40,41 @@ struct SettingsView: View {
                     Label("Biometric authentication required", systemImage: "faceid")
                     Label("No secrets logged", systemImage: "eye.slash")
                 }
-                
+
                 Section("Audit Log") {
                     LabeledContent("Entries", value: "\(auditLog.entries.count)")
-                    
+
                     NavigationLink("View Audit Log") {
                         AuditLogView()
                     }
-                    
+
                     Button("Export Audit Log") {
                         exportAuditLog()
                     }
                 }
-                
+
                 Section("Backup") {
                     Button("Export Plain Backup") {
                         exportMode = .plain
                         exportBackup()
                     }
-                    
+
                     Button("Export Encrypted Backup") {
                         exportMode = .encrypted
                         showPassphraseInput = true
                     }
-                    
+
                     if let data = exportedData {
                         ShareLink(item: data, preview: SharePreview("Nexum Vault Backup"))
                     }
                 }
-                
+
                 Section("Danger Zone") {
                     Button("Delete All Keys", role: .destructive) {
                         showDeleteConfirmation = true
                     }
                 }
-                
+
                 Section("About") {
                     LabeledContent("Version", value: "1.0.0")
                     LabeledContent("Protocol", value: "nexum-mobile-qr v1")
@@ -115,7 +115,7 @@ struct SettingsView: View {
             }
         }
     }
-    
+
     private func exportBackup() {
         do {
             exportedData = try vaultStore.exportBackup(includeAuditLog: true, auditEntries: auditLog.entries)
@@ -124,7 +124,7 @@ struct SettingsView: View {
             showError = true
         }
     }
-    
+
     private func exportEncryptedBackup() {
         guard backupPassphrase == backupPassphraseConfirm else {
             errorMessage = "Passphrases do not match"
@@ -148,7 +148,7 @@ struct SettingsView: View {
             showError = true
         }
     }
-    
+
     private func exportAuditLog() {
         do {
             exportedData = try auditLog.exportData()
@@ -164,7 +164,7 @@ struct EncryptedBackupSheet: View {
     @Binding var passphraseConfirm: String
     let onExport: () -> Void
     @Environment(\.dismiss) var dismiss
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 16) {
@@ -172,27 +172,27 @@ struct EncryptedBackupSheet: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .padding(.horizontal)
-                
+
                 SecureField("Passphrase (min 12 chars)", text: $passphrase)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal)
-                
+
                 SecureField("Confirm passphrase", text: $passphraseConfirm)
                     .textFieldStyle(.roundedBorder)
                     .padding(.horizontal)
-                
+
                 if passphrase != passphraseConfirm && !passphraseConfirm.isEmpty {
                     Text("Passphrases do not match")
                         .font(.caption)
                         .foregroundColor(.red)
                 }
-                
+
                 Button("Export Encrypted Backup") {
                     onExport()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(passphrase.count < 12 || passphrase != passphraseConfirm)
-                
+
                 Spacer()
             }
             .padding(.top, 20)
@@ -209,7 +209,7 @@ struct EncryptedBackupSheet: View {
 
 struct AuditLogView: View {
     @EnvironmentObject var auditLog: AuditLogStore
-    
+
     var body: some View {
         List {
             if auditLog.entries.isEmpty {
@@ -252,7 +252,7 @@ struct AuditLogView: View {
         }
         .navigationTitle("Audit Log")
     }
-    
+
     private func statusColor(_ status: AuditStatus) -> Color {
         switch status {
         case .signed, .callbackSuccess: return .green

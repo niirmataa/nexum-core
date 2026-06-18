@@ -3,17 +3,17 @@ import SwiftUI
 struct SignatureResultView: View {
     @EnvironmentObject var auditLog: AuditLogStore
     @Environment(\.dismiss) var dismiss
-    
+
     let response: NexumResponse
     let challenge: NexumChallenge
     let callbackUrl: String?
-    
+
     @State private var showQR = false
     @State private var callbackStatus: CallbackStatus = .pending
     @State private var callbackResult: CallbackResult?
     @State private var showError = false
     @State private var errorMessage = ""
-    
+
     enum CallbackStatus {
         case pending
         case sending
@@ -21,7 +21,7 @@ struct SignatureResultView: View {
         case failed
         case notConfigured
     }
-    
+
     var body: some View {
         NavigationStack {
             List {
@@ -37,7 +37,7 @@ struct SignatureResultView: View {
                     LabeledContent("Algorithm", value: response.algorithm)
                     LabeledContent("Signed At", value: response.signedAt.formatted(date: .abbreviated, time: .standard))
                 }
-                
+
                 if let callbackUrl = callbackUrl, !callbackUrl.isEmpty {
                     Section("Callback") {
                         LabeledContent("Endpoint") {
@@ -45,7 +45,7 @@ struct SignatureResultView: View {
                                 .font(.caption)
                                 .textSelection(.enabled)
                         }
-                        
+
                         switch callbackStatus {
                         case .pending:
                             Button("Send to Callback") {
@@ -73,23 +73,23 @@ struct SignatureResultView: View {
                         }
                     }
                 }
-                
+
                 Section("QR Response") {
                     Button(action: { showQR.toggle() }) {
                         Label(showQR ? "Hide QR" : "Show Response QR", systemImage: "qrcode")
                     }
-                    
+
                     if showQR {
                         VStack(spacing: 12) {
                             QRCodeView(data: responseJSON())
                                 .frame(width: 250, height: 250)
                                 .padding(.vertical, 8)
-                            
+
                             Text("Storefront can scan this QR to verify your signature")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
-                            
+
                             Button(action: {
                                 UIPasteboard.general.string = responseJSON()
                             }) {
@@ -98,7 +98,7 @@ struct SignatureResultView: View {
                         }
                     }
                 }
-                
+
                 Section("Response JSON") {
                     ScrollView(.horizontal, showsIndicators: false) {
                         Text(responseJSON())
@@ -127,7 +127,7 @@ struct SignatureResultView: View {
             }
         }
     }
-    
+
     private func responseJSON() -> String {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -138,16 +138,16 @@ struct SignatureResultView: View {
         }
         return string
     }
-    
+
     private func sendCallback() async {
         guard let callbackUrl = callbackUrl, !callbackUrl.isEmpty else { return }
         callbackStatus = .sending
-        
+
         do {
             let client = CallbackClient()
             let result = try await client.sendResponse(response, to: callbackUrl)
             callbackResult = result
-            
+
             if result.success {
                 callbackStatus = .success
                 auditLog.log(

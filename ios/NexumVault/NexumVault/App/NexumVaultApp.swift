@@ -6,7 +6,7 @@ struct NexumVaultApp: App {
     @StateObject private var auditLog = AuditLogStore()
     @StateObject private var biometricAuth = BiometricAuth()
     @State private var isLocked = true
-    
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -34,23 +34,23 @@ struct LockScreenView: View {
     @ObservedObject var biometricAuth: BiometricAuth
     @State private var showError = false
     @State private var errorMessage = ""
-    
+
     var body: some View {
         VStack(spacing: 32) {
             Spacer()
-            
+
             Image(systemName: "lock.shield.fill")
                 .font(.system(size: 80))
                 .foregroundColor(.blue)
-            
+
             Text("Nexum Vault")
                 .font(.largeTitle)
                 .fontWeight(.bold)
-            
+
             Text("Authenticate to access your vault")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
-            
+
             Button(action: authenticate) {
                 Label(
                     biometricAuth.biometricType == .faceID ? "Unlock with Face ID" : "Unlock",
@@ -63,7 +63,7 @@ struct LockScreenView: View {
                 .cornerRadius(12)
             }
             .padding(.horizontal, 40)
-            
+
             Spacer()
         }
         .alert("Authentication Error", isPresented: $showError) {
@@ -73,7 +73,7 @@ struct LockScreenView: View {
             Text(errorMessage)
         }
     }
-    
+
     private func authenticate() {
         Task {
             do {

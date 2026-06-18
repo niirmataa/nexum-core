@@ -9,7 +9,7 @@ struct AuditEntry: Codable, Identifiable {
     let keyId: String
     let status: AuditStatus
     let deviceName: String
-    
+
     init(
         id: UUID = UUID(),
         signedAt: Date = Date(),

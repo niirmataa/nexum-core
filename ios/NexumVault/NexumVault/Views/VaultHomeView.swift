@@ -9,7 +9,7 @@ struct VaultHomeView: View {
     @State private var showImport = false
     @State private var showError = false
     @State private var errorMessage = ""
-    
+
     var body: some View {
         NavigationStack {
             List {
@@ -28,14 +28,14 @@ struct VaultHomeView: View {
                         }
                     }
                 }
-                
+
                 if !vaultStore.keys.isEmpty {
                     Section("Actions") {
                         Button(action: { showScanner = true }) {
                             Label("Scan Challenge QR", systemImage: "qrcode.viewfinder")
                         }
                     }
-                    
+
                     Section("Recent Activity") {
                         let recent = Array(auditLog.entries.prefix(5))
                         if recent.isEmpty {
@@ -91,7 +91,7 @@ struct VaultHomeView: View {
             }
         }
     }
-    
+
     private func importBackup(from url: URL) {
         guard url.startAccessingSecurityScopedResource() else {
             errorMessage = "Cannot access file"
@@ -99,7 +99,7 @@ struct VaultHomeView: View {
             return
         }
         defer { url.stopAccessingSecurityScopedResource() }
-        
+
         do {
             let data = try Data(contentsOf: url)
             try vaultStore.importBackup(data)
@@ -112,7 +112,7 @@ struct VaultHomeView: View {
 
 struct KeyRowView: View {
     let key: VaultKey
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(key.keyId)
@@ -132,7 +132,7 @@ struct KeyRowView: View {
 
 struct AuditRowView: View {
     let entry: AuditEntry
-    
+
     var body: some View {
         HStack {
             Image(systemName: statusIcon)
@@ -152,7 +152,7 @@ struct AuditRowView: View {
                 .foregroundColor(.secondary)
         }
     }
-    
+
     private var statusIcon: String {
         switch entry.status {
         case .signed: return "checkmark.seal.fill"
@@ -163,7 +163,7 @@ struct AuditRowView: View {
         case .qrDisplayed: return "qrcode"
         }
     }
-    
+
     private var statusColor: Color {
         switch entry.status {
         case .signed, .callbackSuccess: return .green

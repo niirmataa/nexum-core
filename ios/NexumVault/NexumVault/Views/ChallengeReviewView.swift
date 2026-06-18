@@ -4,18 +4,18 @@ struct ChallengeReviewView: View {
     @EnvironmentObject var vaultStore: VaultStore
     @EnvironmentObject var auditLog: AuditLogStore
     @Environment(\.dismiss) var dismiss
-    
+
     let challenge: NexumChallenge
-    
+
     @State private var selectedKey: VaultKey?
     @State private var isSigning = false
     @State private var showResult = false
     @State private var response: NexumResponse?
     @State private var showError = false
     @State private var errorMessage = ""
-    
+
     private let knownOrigins: Set<String> = ["https://igrowpro.pl"]
-    
+
     var body: some View {
         NavigationStack {
             List {
@@ -27,7 +27,7 @@ struct ChallengeReviewView: View {
                             .font(.caption.monospaced())
                             .textSelection(.enabled)
                     }
-                    
+
                     if let display = challenge.display {
                         if let title = display.title, !title.isEmpty {
                             LabeledContent("Title", value: title)
@@ -43,11 +43,11 @@ struct ChallengeReviewView: View {
                         }
                     }
                 }
-                
+
                 Section("Timing") {
                     LabeledContent("Issued", value: challenge.issuedAt.formatted(date: .abbreviated, time: .standard))
                     LabeledContent("Expires", value: challenge.expiresAt.formatted(date: .abbreviated, time: .standard))
-                    
+
                     if challenge.isExpired {
                         Label("Challenge has expired", systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.red)
@@ -61,13 +61,13 @@ struct ChallengeReviewView: View {
                         }
                     }
                 }
-                
+
                 Section("Fingerprint") {
                     Text(challenge.fingerprint)
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
                 }
-                
+
                 if !knownOrigins.contains(challenge.origin) {
                     Section {
                         Label {
@@ -83,7 +83,7 @@ struct ChallengeReviewView: View {
                         }
                     }
                 }
-                
+
                 Section("Select Key") {
                     if vaultStore.keys.isEmpty {
                         Label("No keys available. Create a vault first.", systemImage: "key.slash")
@@ -97,7 +97,7 @@ struct ChallengeReviewView: View {
                         }
                     }
                 }
-                
+
                 Section {
                     Button(action: signChallenge) {
                         HStack {
@@ -139,16 +139,16 @@ struct ChallengeReviewView: View {
             }
         }
     }
-    
+
     private func signChallenge() {
         guard let key = selectedKey else { return }
         isSigning = true
-        
+
         Task {
             do {
                 let service = SignatureService(vaultStore: vaultStore)
                 let signed = try await service.signChallenge(challenge, key: key)
-                
+
                 auditLog.log(
                     purpose: challenge.purpose.rawValue,
                     origin: challenge.origin,
@@ -157,13 +157,13 @@ struct ChallengeReviewView: View {
                     status: .signed,
                     deviceName: key.deviceName
                 )
-                
+
                 response = signed
                 showResult = true
             } catch {
                 errorMessage = error.localizedDescription
                 showError = true
-                
+
                 auditLog.log(
                     purpose: challenge.purpose.rawValue,
                     origin: challenge.origin,

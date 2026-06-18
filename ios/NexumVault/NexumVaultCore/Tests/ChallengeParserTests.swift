@@ -2,11 +2,11 @@ import XCTest
 @testable import NexumVaultCore
 
 final class ChallengeParserTests: XCTestCase {
-    
+
     private func futureDate() -> String {
         "2099-12-31T23:59:59Z"
     }
-    
+
     func testValidChallenge() throws {
         let json = """
         {
@@ -28,7 +28,7 @@ final class ChallengeParserTests: XCTestCase {
         XCTAssertEqual(challenge.origin, "https://igrowpro.pl")
         XCTAssertFalse(challenge.isExpired)
     }
-    
+
     func testInvalidVersion() {
         let json = """
         {"version":2,"type":"nexum.challenge","purpose":"login","challengeId":"ch_test","nonce":"abc","issuedAt":"2026-06-17T10:30:00Z","expiresAt":"\(futureDate())","origin":"https://example.com"}
@@ -40,7 +40,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testInvalidType() {
         let json = """
         {"version":1,"type":"wrong.type","purpose":"login","challengeId":"ch_test","nonce":"abc","issuedAt":"2026-06-17T10:30:00Z","expiresAt":"\(futureDate())","origin":"https://example.com"}
@@ -52,7 +52,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testMissingChallengeIdPrefix() {
         let json = """
         {"version":1,"type":"nexum.challenge","purpose":"login","challengeId":"invalid_id","nonce":"abc","issuedAt":"2026-06-17T10:30:00Z","expiresAt":"\(futureDate())","origin":"https://example.com"}
@@ -64,7 +64,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testExpiredChallenge() {
         let json = """
         {"version":1,"type":"nexum.challenge","purpose":"login","challengeId":"ch_test","nonce":"abc","issuedAt":"2020-01-01T00:00:00Z","expiresAt":"2020-01-01T00:01:00Z","origin":"https://example.com"}
@@ -76,7 +76,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testInsecureOrigin() {
         let json = """
         {"version":1,"type":"nexum.challenge","purpose":"login","challengeId":"ch_test","nonce":"abc","issuedAt":"2026-06-17T10:30:00Z","expiresAt":"\(futureDate())","origin":"http://example.com"}
@@ -88,7 +88,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testInvalidTimeRange() {
         let json = """
         {"version":1,"type":"nexum.challenge","purpose":"login","challengeId":"ch_test","nonce":"abc","issuedAt":"2026-06-17T10:35:00Z","expiresAt":"2026-06-17T10:30:00Z","origin":"https://example.com"}
@@ -100,7 +100,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testMissingNonce() {
         let json = """
         {"version":1,"type":"nexum.challenge","purpose":"login","challengeId":"ch_test","nonce":"","issuedAt":"2026-06-17T10:30:00Z","expiresAt":"\(futureDate())","origin":"https://example.com"}
@@ -112,7 +112,7 @@ final class ChallengeParserTests: XCTestCase {
             }
         }
     }
-    
+
     func testAllPurposes() throws {
         for purpose in ["login", "checkout", "escrow", "message"] {
             let json = """
@@ -122,7 +122,7 @@ final class ChallengeParserTests: XCTestCase {
             XCTAssertEqual(challenge.purpose.rawValue, purpose)
         }
     }
-    
+
     func testChallengeWithDisplay() throws {
         let json = """
         {"version":1,"type":"nexum.challenge","purpose":"checkout","challengeId":"ch_checkout_001","nonce":"dGVzdG5vbmNl","issuedAt":"2026-06-17T10:30:00Z","expiresAt":"\(futureDate())","origin":"https://igrowpro.pl","display":{"title":"Complete Purchase","description":"Pay for order","amount":"0.5 XMR","counterparty":"iGrowPro"}}
@@ -132,7 +132,7 @@ final class ChallengeParserTests: XCTestCase {
         XCTAssertEqual(challenge.display?.amount, "0.5 XMR")
         XCTAssertEqual(challenge.display?.counterparty, "iGrowPro")
     }
-    
+
     func testKnownOriginCheck() {
         let known: Set<String> = ["https://igrowpro.pl"]
         XCTAssertTrue(ChallengeParser.isKnownOrigin("https://igrowpro.pl", knownOrigins: known))

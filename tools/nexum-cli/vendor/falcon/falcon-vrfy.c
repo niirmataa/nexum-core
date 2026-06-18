@@ -775,7 +775,7 @@ mq_div_18433(uint32_t x, uint32_t y)
 	uint32_t y0, y1, y2, y3, y4, y5, y6, y7, y8, y9;
 	uint32_t y10, y11, y12, y13, y14, y15, y16, y17, y18;
 
-	y0  = mq_montymul(y, R2t, Qt, Q0It);          
+	y0  = mq_montymul(y, R2t, Qt, Q0It);
 	y1  = mq_montysqr(y0, Qt, Q0It);
 	y2  = mq_montymul(y1, y0, Qt, Q0It);
 	y3  = mq_montysqr(y2, Qt, Q0It);

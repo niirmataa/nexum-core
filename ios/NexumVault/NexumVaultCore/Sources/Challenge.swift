@@ -12,7 +12,7 @@ public struct NexumChallenge: Codable, Sendable {
     public let callbackUrl: String?
     public let payloadHash: String?
     public let display: ChallengeDisplay?
-    
+
     public init(
         version: Int,
         type: String,
@@ -38,11 +38,11 @@ public struct NexumChallenge: Codable, Sendable {
         self.payloadHash = payloadHash
         self.display = display
     }
-    
+
     public var isExpired: Bool {
         Date() > expiresAt
     }
-    
+
     public var fingerprint: String {
         var dict: [String: Any] = [
             "challengeId": challengeId,
@@ -73,7 +73,7 @@ public struct ChallengeDisplay: Codable, Sendable {
     public let description: String?
     public let amount: String?
     public let counterparty: String?
-    
+
     public init(
         title: String? = nil,
         description: String? = nil,
@@ -98,7 +98,7 @@ public struct NexumResponse: Codable, Sendable {
     public let nonce: String
     public let signedAt: Date
     public let device: ResponseDevice?
-    
+
     public init(
         version: Int,
         type: String,
@@ -127,7 +127,7 @@ public struct NexumResponse: Codable, Sendable {
 public struct ResponseDevice: Codable, Sendable {
     public let name: String
     public let platform: String
-    
+
     public init(name: String, platform: String) {
         self.name = name
         self.platform = platform
