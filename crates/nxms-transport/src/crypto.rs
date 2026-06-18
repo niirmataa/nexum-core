@@ -1,3 +1,10 @@
+// SAFETY: This module wraps native C libraries (liboqs FrodoKEM-640-SHAKE,
+// Falcon-1024 PQC signature, libsodium, custom nxms_ms_transport).
+// All `unsafe` blocks are confined to the FFI boundary — every extern "C"
+// call is wrapped in a safe Rust function that validates pointer lifetimes,
+// allocation sizes, return codes, and zeroizes sensitive material.
+// No raw pointer escapes a function's scope. Memory is freed via RAII
+// guards (Drop impls on wrapper types) or explicit `take_alloc_*` helpers.
 use anyhow::{Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use serde::{Deserialize, Serialize};
@@ -140,7 +147,7 @@ impl Drop for KemKeysGuard {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct SecretB64(String);
 
 impl SecretB64 {
@@ -165,7 +172,7 @@ impl Drop for SecretB64 {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Keys {
     kem_sk_b64: SecretB64,
     pub kem_pk_b64: String,
@@ -358,7 +365,7 @@ fn secret_temp_path(path: &Path) -> PathBuf {
     path.with_extension(format!("tmp-{}", std::process::id()))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SealedPacket {
     pub kem_ct_b64: String,
     pub nonce_b64: String,

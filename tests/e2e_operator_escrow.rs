@@ -17,6 +17,7 @@ use nxms_escrow_orchestrator::flow::WorkflowState;
 use nxms_escrow_orchestrator::operator_escrow::*;
 use privai_chain::hash::falcon_pk_hash;
 use privai_chain::note::SpendPolicy;
+use privai_chain::CanonicalDecode;
 use privai_chain::CanonicalEncode;
 
 fn h(fill: u8) -> Hash32 {
