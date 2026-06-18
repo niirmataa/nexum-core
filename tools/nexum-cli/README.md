@@ -47,7 +47,7 @@ Jeśli później dojdą nowe komendy, muszą nadal należeć do user auth/crypto
 ## Crypto
 
 Obecny kod używa:
-- Falcon-1024-CT do podpisów
+- FREE Falcon (ternary N=1536) do podpisów
 - KEM przez liboqs
 
 Vault przechowuje lokalny materiał kluczowy CLI i jest chroniony hasłem użytkownika.

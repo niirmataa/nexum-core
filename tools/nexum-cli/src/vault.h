@@ -5,8 +5,8 @@
 // Simple encrypted vault storing PQ keys.
 
 typedef struct {
-    uint8_t falcon_sk[2305]; // FALCON_PRIVKEY_SIZE(10)
-    uint8_t falcon_pk[1793]; // FALCON_PUBKEY_SIZE(10)
+    uint8_t falcon_sk[16384]; // FREE Falcon ternary max (Huffman ~7681)
+    uint8_t falcon_pk[4096];  // FREE Falcon ternary max (~2880)
     size_t falcon_sk_len;
     size_t falcon_pk_len;
 

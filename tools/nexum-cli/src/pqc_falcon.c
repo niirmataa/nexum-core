@@ -5,91 +5,103 @@
 #include <stdlib.h>
 #include <sodium.h>
 
-// Vendor headers
 #include "../vendor/falcon/falcon.h"
-
-static int init_rng(shake256_context *rng) {
-    int r = shake256_init_prng_from_system(rng);
-    if (r < 0) return r;
-    shake256_flip(rng);
-    return 0;
-}
+#include "../vendor/falcon/shake.h"
 
 int ff_falcon_keygen(uint8_t *sk, size_t *sk_len, uint8_t *pk, size_t *pk_len) {
-    shake256_context rng;
-    if (init_rng(&rng) != 0) return -1;
+    falcon_keygen *fk = falcon_keygen_new(FF_FALCON_LOGN, FF_FALCON_TERNARY);
+    if (!fk) return -1;
 
-    size_t skmax = FALCON_PRIVKEY_SIZE(FF_FALCON_LOGN);
-    size_t pkmax = FALCON_PUBKEY_SIZE(FF_FALCON_LOGN);
+    size_t sk_max = falcon_keygen_max_privkey_size(fk);
+    size_t pk_max = falcon_keygen_max_pubkey_size(fk);
 
-    void *tmp = malloc(FALCON_TMPSIZE_KEYGEN(FF_FALCON_LOGN));
-    if (!tmp) return -1;
+    if (sk_max > FF_FALCON_SK_MAX || pk_max > FF_FALCON_PK_MAX) {
+        falcon_keygen_free(fk);
+        return -1;
+    }
 
-    int r = falcon_keygen_make(&rng, FF_FALCON_LOGN,
-                              sk, skmax,
-                              pk, pkmax,
-                              tmp, FALCON_TMPSIZE_KEYGEN(FF_FALCON_LOGN));
-    sodium_memzero(tmp, FALCON_TMPSIZE_KEYGEN(FF_FALCON_LOGN));
-    free(tmp);
-    if (r != 0) return -1;
+    size_t sk_out_len = sk_max;
+    size_t pk_out_len = pk_max;
 
-    *sk_len = skmax;
-    *pk_len = pkmax;
+    int r = falcon_keygen_make(fk, FALCON_COMP_STATIC,
+                               sk, &sk_out_len,
+                               pk, &pk_out_len);
+    falcon_keygen_free(fk);
+    if (r != 1) return -1;
+
+    *sk_len = sk_out_len;
+    *pk_len = pk_out_len;
     return 0;
 }
 
 int ff_falcon_sign_ct(const uint8_t *sk, size_t sk_len,
                       const uint8_t *msg, size_t msg_len,
                       uint8_t *sig, size_t *sig_len) {
-    shake256_context rng;
-    if (init_rng(&rng) != 0) return -1;
+    falcon_sign *fs = falcon_sign_new();
+    if (!fs) return -1;
 
-    int logn = falcon_get_logn((void*)sk, sk_len);
-    if (logn != FF_FALCON_LOGN) return -1;
+    if (falcon_sign_set_private_key(fs, sk, sk_len) != 1) {
+        falcon_sign_free(fs);
+        return -1;
+    }
 
-    size_t tmpsz = FALCON_TMPSIZE_SIGNDYN(FF_FALCON_LOGN);
-    void *tmp = malloc(tmpsz);
-    if (!tmp) return -1;
+    uint8_t nonce[40];
+    randombytes_buf(nonce, sizeof(nonce));
 
-    int r = falcon_sign_dyn(&rng,
-                           sig, sig_len, FALCON_SIG_CT,
-                           sk, sk_len,
-                           msg, msg_len,
-                           tmp, tmpsz);
-    sodium_memzero(tmp, tmpsz);
-    free(tmp);
-    return (r == 0) ? 0 : -1;
+    falcon_sign_start_external_nonce(fs, nonce, sizeof(nonce));
+    falcon_sign_update(fs, msg, msg_len);
+
+    // sig blob = nonce(40) || encoded_signature
+    size_t sig_max = *sig_len;
+    if (sig_max < 41) {
+        falcon_sign_free(fs);
+        return -1;
+    }
+
+    size_t out_len = falcon_sign_generate(fs, sig + 40, sig_max - 40, FALCON_COMP_STATIC);
+    falcon_sign_free(fs);
+
+    if (out_len == 0) return -1;
+
+    // Prepend nonce to signature
+    memcpy(sig, nonce, 40);
+    *sig_len = 40 + out_len;
+    return 0;
 }
 
 int ff_falcon_verify(const uint8_t *pk, size_t pk_len,
                      const uint8_t *msg, size_t msg_len,
                      const uint8_t *sig, size_t sig_len) {
-    int logn = falcon_get_logn((void*)pk, pk_len);
-    if (logn != FF_FALCON_LOGN) return -1;
+    if (sig_len < 41) return -1;
 
-    size_t tmpsz = FALCON_TMPSIZE_VERIFY(FF_FALCON_LOGN);
-    void *tmp = malloc(tmpsz);
-    if (!tmp) return -1;
+    falcon_vrfy *fv = falcon_vrfy_new();
+    if (!fv) return -1;
 
-    int r = falcon_verify(sig, sig_len, FALCON_SIG_CT,
-                          pk, pk_len,
-                          msg, msg_len,
-                          tmp, tmpsz);
-    sodium_memzero(tmp, tmpsz);
-    free(tmp);
-    return (r == 0) ? 0 : -1;
+    if (falcon_vrfy_set_public_key(fv, pk, pk_len) != 1) {
+        falcon_vrfy_free(fv);
+        return -1;
+    }
+
+    // Extract nonce from first 40 bytes of sig blob
+    falcon_vrfy_start(fv, sig, 40);
+    falcon_vrfy_update(fv, msg, msg_len);
+
+    int rc = falcon_vrfy_verify(fv, sig + 40, sig_len - 40);
+    falcon_vrfy_free(fv);
+
+    return (rc == 1) ? 0 : -1;
 }
 
 void ff_shake256_kdf(const uint8_t *in, size_t in_len,
                      const uint8_t *ctx, size_t ctx_len,
                      uint8_t *out, size_t out_len) {
-    shake256_context sc;
-    shake256_init(&sc);
+    shake_context sc;
+    shake_init(&sc, 512);
     if (ctx && ctx_len) {
-        shake256_inject(&sc, ctx, ctx_len);
+        shake_inject(&sc, ctx, ctx_len);
     }
-    shake256_inject(&sc, in, in_len);
-    shake256_flip(&sc);
-    shake256_extract(&sc, out, out_len);
+    shake_inject(&sc, in, in_len);
+    shake_flip(&sc);
+    shake_extract(&sc, out, out_len);
     sodium_memzero(&sc, sizeof(sc));
 }

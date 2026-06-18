@@ -16,16 +16,13 @@ LDFLAGS += $(HARDEN_LDFLAGS)
 LIBS = -lsodium -lcurl -loqs -ljansson -lsqlite3 -lm
 
 FALCON_SRC = \
-	vendor/falcon/codec.c \
-	vendor/falcon/common.c \
-	vendor/falcon/falcon.c \
-	vendor/falcon/fft.c \
-	vendor/falcon/fpr.c \
-	vendor/falcon/keygen.c \
-	vendor/falcon/rng.c \
-	vendor/falcon/shake.c \
-	vendor/falcon/sign.c \
-	vendor/falcon/vrfy.c
+	vendor/falcon/falcon-enc.c \
+	vendor/falcon/falcon-fft.c \
+	vendor/falcon/falcon-keygen.c \
+	vendor/falcon/falcon-sign.c \
+	vendor/falcon/falcon-vrfy.c \
+	vendor/falcon/frng.c \
+	vendor/falcon/shake.c
 
 SRC = \
 	src/util.c \

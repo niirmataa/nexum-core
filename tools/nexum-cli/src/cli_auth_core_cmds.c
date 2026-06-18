@@ -140,7 +140,7 @@ int cmd_keygen(const char *dir, const char *kem_alg) {
         ff_die("vault save failed");
     }
 
-    printf("OK: generated Falcon-1024(CT) + KEM(%s)\n", v.kem_alg);
+    printf("OK: generated free_falconb_sign + KEM(%s)\n", v.kem_alg);
 
     ff_vault_free(&v);
     secure_free_str(&pass);

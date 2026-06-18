@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Generate Falcon-1024-CT and FrodoKEM-640-SHAKE KAT vectors.
+Generate FREE Falcon (ternary N=1536) and FrodoKEM-640-SHAKE KAT vectors.
 
 Python (libff_falcon.so + liboqs) generates keys, signatures, KEM operations.
-C (vendor/falcon + liboqs) must produce identical results.
+C (vendor/falcon Extra/c + liboqs) must produce identical results.
 
 Vectors:
-  1. Falcon keygen: same seed → same pk/sk
-  2. Falcon sign:   Python signs → C must verify
-  3. Falcon sign:   second message → second sig → C must verify
-  4. FrodoKEM:      Python keygen + encaps → C decaps → same shared secret
-  5. FrodoKEM:      second encaps → second ct/ss → C decaps matches
+  1. Falcon keygen: same seed -> same pk/sk
+  2. Falcon sign:   Python signs -> C must verify
+  3. Falcon sign:   second message -> second sig -> C must verify
+  4. FrodoKEM:      Python keygen + encaps -> C decaps -> same shared secret
+  5. FrodoKEM:      second encaps -> second ct/ss -> C decaps matches
 
 Usage:
     python3 gen_falcon_frodo_kat.py > falcon_frodo_kat_vectors.h
@@ -24,55 +24,54 @@ import warnings
 warnings.filterwarnings("ignore")
 import oqs  # noqa: E402
 
-# ── Falcon via libff_falcon.so ──────────────────────────────────────────────
-
-FALCON_PK_SIZE = 1793
-FALCON_SK_SIZE = 2305
-FALCON_SIG_CT_SIZE = 1577
+# FREE Falcon ternary sizes (N=1536, q=18433, logn=10, Huffman compression)
+FALCON_PK_SIZE = 2881
+FALCON_SK_SIZE = 7681
+FALCON_SIG_MAX_SIZE = 2000
 
 _lib_path = os.path.join(os.path.dirname(__file__), "..", "..", "server", "app", "crypto", "native", "libff_falcon.so")
 _lib = ctypes.CDLL(_lib_path)
-_lib.ff_falcon1024_keygen.argtypes = [ctypes.c_void_p, ctypes.c_size_t,
-                                      ctypes.c_void_p, ctypes.c_size_t,
-                                      ctypes.c_void_p, ctypes.c_size_t]
-_lib.ff_falcon1024_keygen.restype = ctypes.c_int
-_lib.ff_falcon1024_sign_ct.argtypes = [ctypes.c_void_p, ctypes.c_size_t,
-                                       ctypes.c_void_p, ctypes.c_size_t,
-                                       ctypes.c_void_p, ctypes.c_size_t,
-                                       ctypes.c_void_p, ctypes.c_size_t]
-_lib.ff_falcon1024_sign_ct.restype = ctypes.c_int
-_lib.ff_falcon1024_verify_ct.argtypes = [ctypes.c_void_p, ctypes.c_size_t,
-                                         ctypes.c_void_p, ctypes.c_size_t,
-                                         ctypes.c_void_p, ctypes.c_size_t]
-_lib.ff_falcon1024_verify_ct.restype = ctypes.c_int
+_lib.ff_free_falconb_sign_keygen.argtypes = [ctypes.c_void_p, ctypes.c_size_t,
+                                              ctypes.c_void_p, ctypes.c_size_t,
+                                              ctypes.c_void_p, ctypes.c_size_t]
+_lib.ff_free_falconb_sign_keygen.restype = ctypes.c_int
+_lib.ff_free_falconb_sign_sign_ct.argtypes = [ctypes.c_void_p, ctypes.c_size_t,
+                                               ctypes.c_void_p, ctypes.c_size_t,
+                                               ctypes.c_void_p, ctypes.c_size_t,
+                                               ctypes.c_void_p, ctypes.c_size_t]
+_lib.ff_free_falconb_sign_sign_ct.restype = ctypes.c_int
+_lib.ff_free_falconb_sign_verify.argtypes = [ctypes.c_void_p, ctypes.c_size_t,
+                                              ctypes.c_void_p, ctypes.c_size_t,
+                                              ctypes.c_void_p, ctypes.c_size_t]
+_lib.ff_free_falconb_sign_verify.restype = ctypes.c_int
 
 
 def falcon_keygen(seed: bytes):
     pk = bytearray(FALCON_PK_SIZE)
     sk = bytearray(FALCON_SK_SIZE)
-    rc = _lib.ff_falcon1024_keygen(seed, len(seed),
-                                   (ctypes.c_ubyte * FALCON_SK_SIZE).from_buffer(sk), FALCON_SK_SIZE,
-                                   (ctypes.c_ubyte * FALCON_PK_SIZE).from_buffer(pk), FALCON_PK_SIZE)
+    rc = _lib.ff_free_falconb_sign_keygen(seed, len(seed),
+                                           (ctypes.c_ubyte * FALCON_SK_SIZE).from_buffer(sk), FALCON_SK_SIZE,
+                                           (ctypes.c_ubyte * FALCON_PK_SIZE).from_buffer(pk), FALCON_PK_SIZE)
     assert rc == 0, f"falcon keygen failed: {rc}"
     return bytes(pk), bytes(sk)
 
 
 def falcon_sign(seed: bytes, sk: bytes, msg: bytes):
-    sig = bytearray(FALCON_SIG_CT_SIZE)
-    rc = _lib.ff_falcon1024_sign_ct(seed, len(seed),
-                                    sk, len(sk),
-                                    msg, len(msg),
-                                    (ctypes.c_ubyte * FALCON_SIG_CT_SIZE).from_buffer(sig), FALCON_SIG_CT_SIZE)
+    sig = bytearray(FALCON_SIG_MAX_SIZE)
+    rc = _lib.ff_free_falconb_sign_sign_ct(seed, len(seed),
+                                            sk, len(sk),
+                                            msg, len(msg),
+                                            (ctypes.c_ubyte * FALCON_SIG_MAX_SIZE).from_buffer(sig), FALCON_SIG_MAX_SIZE)
     assert rc == 0, f"falcon sign failed: {rc}"
     return bytes(sig)
 
 
 def falcon_verify(pk: bytes, msg: bytes, sig: bytes):
-    rc = _lib.ff_falcon1024_verify_ct(pk, len(pk), msg, len(msg), sig, len(sig))
+    rc = _lib.ff_free_falconb_sign_verify(pk, len(pk), msg, len(msg), sig, len(sig))
     return rc == 0
 
 
-# ── FrodoKEM via liboqs ─────────────────────────────────────────────────────
+# FrodoKEM via liboqs
 
 KEM_ALG = "FrodoKEM-640-SHAKE"
 
@@ -95,7 +94,7 @@ def frodo_decaps(sk: bytes, ct: bytes):
     return bytes(kem.decap_secret(ct))
 
 
-# ── C code generator helpers ────────────────────────────────────────────────
+# C code generator helpers
 
 def c_bytes(data: bytes, name: str) -> str:
     hex_str = ", ".join(f"0x{b:02x}" for b in data)
@@ -110,10 +109,8 @@ def main():
     out.append("#include <stddef.h>")
     out.append("")
 
-    # ════════════════════════════════════════════════════════════════════════
-    # FALCON-1024-CT KAT
-    # ════════════════════════════════════════════════════════════════════════
-    out.append("/* ═══ FALCON-1024-CT KAT ═══ */")
+    # FREE FALCON TERNARY KAT
+    out.append("/* FREE FALCON TERNARY (N=1536) KAT */")
     out.append("")
 
     # Deterministic keygen seed
@@ -124,16 +121,16 @@ def main():
     out.append(f"static const size_t FALCON_KEYGEN_SEED_LEN = {len(keygen_seed)};")
     out.append("")
 
-    # Export full pk and sk so C can compare byte-for-byte
     out.append(c_bytes(pk, "FALCON_EXPECTED_PK"))
     out.append(f"static const size_t FALCON_EXPECTED_PK_LEN = {len(pk)};")
     out.append("")
+
     out.append(c_bytes(sk, "FALCON_EXPECTED_SK"))
     out.append(f"static const size_t FALCON_EXPECTED_SK_LEN = {len(sk)};")
     out.append("")
 
-    # Message 1: sign with Python → C must verify
-    msg1 = b"Falcon-1024-CT KAT test vector: message one"
+    # Message 1: sign with Python -> C must verify
+    msg1 = b"FREE Falcon ternary KAT test vector: message one"
     sig_seed1 = bytes([0x42] * 48)
     sig1 = falcon_sign(sig_seed1, sk, msg1)
     assert falcon_verify(pk, msg1, sig1), "self-verify msg1 failed"
@@ -145,8 +142,8 @@ def main():
     out.append(f"static const size_t FALCON_SIG1_LEN = {len(sig1)};")
     out.append("")
 
-    # Message 2: different message → different sig → C must verify
-    msg2 = b"Second message for Falcon cross-KAT: different content, different signature"
+    # Message 2: different message -> different sig -> C must verify
+    msg2 = b"Second message for FREE Falcon cross-KAT: different content"
     sig_seed2 = bytes([0xBB] * 48)
     sig2 = falcon_sign(sig_seed2, sk, msg2)
     assert falcon_verify(pk, msg2, sig2), "self-verify msg2 failed"
@@ -174,10 +171,8 @@ def main():
     # Cross-check: wrong message must fail verify
     assert not falcon_verify(pk, b"wrong message", sig1), "verify with wrong msg should fail"
 
-    # ════════════════════════════════════════════════════════════════════════
     # FRODOKEM-640-SHAKE KAT
-    # ════════════════════════════════════════════════════════════════════════
-    out.append("/* ═══ FRODOKEM-640-SHAKE KAT ═══ */")
+    out.append("/* FRODOKEM-640-SHAKE KAT */")
     out.append("")
 
     pk_kem, sk_kem = frodo_keygen()
@@ -199,7 +194,7 @@ def main():
     out.append(f"static const size_t FRODO_SS1_LEN = {len(ss1)};")
     out.append("")
 
-    # Encaps 2 (different random → different ct/ss)
+    # Encaps 2
     ct2, ss2 = frodo_encaps(pk_kem)
     ss2_check = frodo_decaps(sk_kem, ct2)
     assert ss2 == ss2_check, "sanity: frodo ss2 mismatch"

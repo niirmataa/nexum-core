@@ -403,7 +403,7 @@ int ff_vault_save(const char *dir, const char *pass, const ff_vault_t *v) {
     /* Manifest JSON */
     char manifest[512];
     snprintf(manifest, sizeof(manifest),
-             "{\"v\":1,\"nick\":\"%s\",\"sig_alg\":\"falcon1024-ct\",\"kem_alg\":\"%s\"}",
+             "{\"v\":1,\"nick\":\"%s\",\"sig_alg\":\"free_falconb_sign\",\"kem_alg\":\"%s\"}",
              v->nick,
              v->kem_alg[0] ? v->kem_alg : "ntru-hrss701");
 
