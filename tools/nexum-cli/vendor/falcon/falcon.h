@@ -1,9 +1,9 @@
 /*
- * External Falcon API.
+ * Public API for Falcon.
  *
  * ==========================(LICENSE BEGIN)============================
  *
- * Copyright (c) 2017-2019  Falcon Project
+ * Copyright (c) 2017  Falcon Project
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -26,7 +26,7 @@
  *
  * ===========================(LICENSE END)=============================
  *
- * @author   Thomas Pornin <thomas.pornin@nccgroup.com>
+ * @author   Thomas Pornin <thomas.pornin@nccgroup.trust>
  */
 
 #ifndef FALCON_H__
@@ -41,766 +41,341 @@ extern "C" {
 
 /* ==================================================================== */
 /*
- * Falcon API Notes
- * ----------------
+ * Small vector compression.
  *
- *
- * FALCON DEGREE
- *
- * Falcon is parameterized by a degree, which is a power of two. Formally,
- * two values are possible: 512 and 1024 (for Falcon-512 and Falcon-1024,
- * respectively). This implementation also supports lower degrees, from
- * 2 to 256; these reduced variants do not provide adequate security and
- * should be used for research purposes only.
- *
- * In all functions and macros defined below, the degree is provided
- * logarithmically as the 'logn' parameter: logn ranges from 1 to 10,
- * and represents the degree 2^logn.
- *
- *
- * ERROR REPORTING
- *
- * All functions that may fail for some reason return an 'int' value. A
- * returned value of zero is a success; all error conditions are
- * reported as an error code. Error codes are negative. Macros are
- * defined for some error codes; in the interest of forward
- * compatiblity, applications that use this implementation should be
- * prepared to receive other error codes not listed in the macros below.
- *
- *
- * TEMPORARY BUFFERS
- *
- * Many functions expect temporary areas, provided as the parameter
- * 'tmp'. The caller is responsible for allocating these areas with the
- * proper size; the FALCON_TMPSIZE_* macros evaluate to constant
- * expressions that yield the proper size (in bytes) and can be used to
- * allocate the temporaries on the stack or elsewhere. There are no
- * alignment requirements on temporaries (the functions handle alignment
- * internally).
- *
- * The caller is responsible for clearing temporary buffer contents,
- * if such memory scrubbing is deemed relevant in the context where this
- * implementation is used.
- *
- * The same temporary buffer can be reused for several operations,
- * possibly distinct from each other. For all degrees from 8 to 1024
- * (logn = 3 to 10), the following sizes are in ascending order:
- *
- *    FALCON_TMPSIZE_MAKEPUB
- *    FALCON_TMPSIZE_VERIFY
- *    FALCON_TMPSIZE_KEYGEN
- *    FALCON_TMPSIZE_SIGNTREE
- *    FALCON_TMPSIZE_EXPANDPRIV
- *    FALCON_TMPSIZE_SIGNDYN
- *
- * i.e. a temporary buffer large enough for computing signatures with
- * an expanded key ("SIGNTREE") will also be large enough for a
- * key pair generation ("KEYGEN"). For logn = 1 or 2, the same order
- * holds, except that the KEYGEN buffer is larger.
- *
- * Here are the actual values for the temporary buffer sizes (in bytes):
- *
- * degree  mkpub  verify  keygen  signtree  expkey  signdyn
- *     2      13      17     285       107     111      163
- *     4      25      33     291       207     215      319
- *     8      49      65     303       407     423      631
- *    16      97     129     503       807     839     1255
- *    32     193     257     999      1607    1671     2503
- *    64     385     513    1991      3207    3335     4999
- *   128     769    1025    3975      6407    6663     9991
- *   256    1537    2049    7943     12807   13319    19975
- *   512    3073    4097   15879     25607   26631    39943
- *  1024    6145    8193   31751     51207   53255    79879
- *
- * Take care that the "expkey" column here qualifies the temporary buffer
- * for the key expansion process, but NOT the expanded key itself (which
- * has size FALCON_EXPANDEDKEY_SIZE(logn) and is larger than that).
- *
- *
- * FORMATS
- *
- * Public and private keys are exchanged as serialized sequences of
- * bytes. Their respective sizes are fixed (for a given degree) and the
- * FALCON_PRIVKEY_SIZE and FALCON_PUBKEY_SIZE macros return that value
- * as constant expressions.
- *
- * There are three formats for signatures:
- *
- *   - COMPRESSED: this is the default format, which yields the shortest
- *     signatures on average. However, the size is variable (see below)
- *     though within a limited range.
- *
- *   - PADDED: this is the compressed format, but with extra padding bytes
- *     to obtain a fixed size known at compile-time. The size depends only
- *     on the degree; the FALCON_SIG_PADDED_SIZE macro computes it. The
- *     signature process enforces that size by restarting the process
- *     until an appropriate size is obtained (such restarts are uncommon
- *     enough that the computational overhead is negligible).
- *
- *   - CT: this is a fixed-size format, which furthermore allows
- *     constant-time processing with regard to the signature value and
- *     message data. This is meant for uncommon situations in which
- *     the signed data is secret but of low entropy, and the public key
- *     is not actually public. The CT format is larger than the
- *     COMPRESSED and PADDED formats.
- *
- * The signature format is selected by the 'sig_type' parameter to
- * the signature generation and verification functions.
- *
- * Actual signature size has been measured over 10000 signatures for each
- * degree (100 random keys, 100 signatures per key):
- *
- * degree     ct   padded  compressed (with std. dev)  comp_max
- *     2      44      44       44.00 (+/- 0.00)            44
- *     4      47      47       46.03 (+/- 0.17)            47
- *     8      52      52       50.97 (+/- 0.26)            52
- *    16      65      63       60.45 (+/- 0.52)            64
- *    32      89      82       79.53 (+/- 0.68)            86
- *    64     137     122      117.69 (+/- 0.94)           130
- *   128     233     200      193.96 (+/- 1.30)           219
- *   256     425     356      346.53 (+/- 1.84)           397
- *   512     809     666      651.59 (+/- 2.55)           752
- *  1024    1577    1280     1261.06 (+/- 3.57)          1462
- *
- * with:
- *   degree = Falcon degree = 2^logn
- *   ct = FALCON_SIG_CT_SIZE(logn)  (size of a CT signature)
- *   padded = FALCON_SIG_PADDED_SIZE(logn)  (size of a PADDED signature)
- *   compressed = measured average length of a COMPRESSED signature
- *   v_max = FALCON_SIG_COMPRESSED_MAXSIZE(logn)  (maximum theoretical
- *           size of a COMPRESSED signature)
- * All lengths are in bytes.
- *
- * A private key, in its encoded format, can be used as parameter to
- * falcon_sign_dyn(). An "expanded private key" is computed with
- * falcon_expand_privkey(), to be used with falcon_sign_tree(). The
- * expanded private key is much larger than the encoded private key, and
- * its format is not portable. Its size (in bytes) is provided by
- * FALCON_EXPANDEDKEY_SIZE. There are no specific alignment requirements
- * on expanded keys, except that the alignment of a given expanded key
- * must not change (i.e. if an expanded key is moved from address addr1
- * to address addr2, then it must hold that addr1 = addr2 mod 8).
- * Expanded private keys are meant to be used when several signatures are
- * to be computed with the same private key: amortized cost per signature
- * is about halved when using expanded private keys (for short messages,
- * and depending on underlying architecture and implementation choices).
- *
- *
- * USE OF SHAKE256
- *
- * SHAKE256 is used in two places:
- *
- *  - As a PRNG: all functions that require randomness (key pair
- *    generation, signature generation) receive as parameter a SHAKE256
- *    object, in output mode, from which pseudorandom data is obtained.
- *
- *    A SHAKE256 instance, to be used as a RNG, can be initialized
- *    from an explicit 48-byte seed, or from an OS-provided RNG. Using
- *    an explicit seed is meant for reproducibility of test vectors,
- *    or to be used in cases where no OS-provided RNG is available and
- *    supported.
- *
- *  - As the hashing mechanism for the message which should be signed.
- *    The streamed signature API exposes that SHAKE256 object, since
- *    the caller then performs the hashing externally.
+ * Signatures and private keys contain small vectors. They are optionally
+ * compressed. Several compression algorithms are defined.
  */
+
+/* No compression. */
+#define FALCON_COMP_NONE      0
+
+/* Compression with static codes (approximation of Huffman codes). */
+#define FALCON_COMP_STATIC    1
 
 /* ==================================================================== */
 /*
- * Error codes.
+ * Signature verifier.
  *
- * Most functions in this API that may fail for some reason return an
- * 'int' value which will be 0 on success, or a negative error code.
- * The macros below define the error codes. In the interest of forward
- * compatibility, callers should be prepared to receive additional error
- * codes not included in the list below.
- */
-
-/*
- * FALCON_ERR_RANDOM is returned when the library tries to use an
- * OS-provided RNG, but either none is supported, or that RNG fails.
- */
-#define FALCON_ERR_RANDOM     -1
-
-/*
- * FALCON_ERR_SIZE is returned when a buffer has been provided to
- * the library but is too small to receive the intended value.
- */
-#define FALCON_ERR_SIZE       -2
-
-/*
- * FALCON_ERR_FORMAT is returned when decoding of an external object
- * (public key, private key, signature) fails.
- */
-#define FALCON_ERR_FORMAT     -3
-
-/*
- * FALCON_ERR_BADSIG is returned when verifying a signature, the signature
- * is validly encoded, but its value does not match the provided message
- * and public key.
- */
-#define FALCON_ERR_BADSIG     -4
-
-/*
- * FALCON_ERR_BADARG is returned when a provided parameter is not in
- * a valid range.
- */
-#define FALCON_ERR_BADARG     -5
-
-/*
- * FALCON_ERR_INTERNAL is returned when some internal computation failed.
- */
-#define FALCON_ERR_INTERNAL   -6
-
-/* ==================================================================== */
-/*
- * Signature formats.
- */
-
-/*
- * Variable-size signature. This format produces the most compact
- * signatures on average, but the signature size may vary depending
- * on private key, signed data, and random seed.
- */
-#define FALCON_SIG_COMPRESSED   1
-
-/*
- * Fixed-size signature. This format produces is equivalent to the
- * "compressed" format, but includes padding to a known fixed size
- * (specified by FALCON_SIG_PADDED_SIZE). With this format, the
- * signature generation loops until an appropriate signature size is
- * achieved (such looping is uncommon) and adds the padding bytes;
- * the verification functions check the presence and contents of the
- * padding bytes.
- */
-#define FALCON_SIG_PADDED       2
-
-/*
- * Fixed-size format amenable to constant-time implementation. All formats
- * allow constant-time code with regard to the private key; the 'CT'
- * format of signature also prevents information about the signature value
- * and the signed data hash to leak through timing-based side channels
- * (this feature is rarely needed).
- */
-#define FALCON_SIG_CT           3
-
-/* ==================================================================== */
-/*
- * Sizes.
+ * An opaque falcon_vrfy context structure must be allocated with
+ * falcon_vrfy_new(). That context must be ultimately released with
+ * falcon_vrfy_free().
  *
- * The sizes are expressed in bytes. Each size depends on the Falcon
- * degree, which is provided logarithmically: use logn=9 for Falcon-512,
- * logn=10 for Falcon-1024. Valid values for logn range from 1 to 10
- * (values 1 to 8 correspond to reduced variants of Falcon that do not
- * provided adequate security and are meant for research purposes only).
+ * The public key is set with falcon_vrfy_set_public_key(). The public
+ * key must be set at some point before calling falcon_vrfy_verify(),
+ * but part or all of the signed message may be injected before setting
+ * the public key. Several successive signature verifications can be
+ * performed with the same context; the public key is preserved, unless
+ * changed explicitly.
  *
- * The sizes are provided as macros that evaluate to constant
- * expressions, as long as the 'logn' parameter is itself a constant
- * expression. Moreover, all sizes are monotonic (for each size category,
- * increasing logn cannot result in a shorter length).
+ * To start a new verification, call falcon_vrfy_start(). Then inject
+ * the signed message data with zero, one or more calls to
+ * falcon_vrfy_update(). Finally, falcon_vrfy_verify() checks the
+ * signature against the injected message and the set public key.
  *
- * Note: each macro may evaluate its argument 'logn' several times.
+ * Falcon signatures include an explicit nonce element, which must be
+ * provided as parameter to falcon_vrfy_start(). The nonce should be
+ * generated randomly by the signer.
  */
 
 /*
- * Private key size (in bytes). The size is exact.
+ * Signature verifier context.
  */
-#define FALCON_PRIVKEY_SIZE(logn) \
-	(((logn) <= 3 \
-		? (3u << (logn)) \
-		: ((10u - ((logn) >> 1)) << ((logn) - 2)) + (1 << (logn))) \
-	+ 1)
+typedef struct falcon_vrfy_ falcon_vrfy;
 
 /*
- * Public key size (in bytes). The size is exact.
+ * Allocate a new falcon_vrfy structure. It will have to be released later
+ * on with falcon_vrfy_free().
+ *
+ * This function returns NULL on memory allocation failure.
  */
-#define FALCON_PUBKEY_SIZE(logn) \
-	(((logn) <= 1 \
-		? 4u \
-		: (7u << ((logn) - 2))) \
-	+ 1)
+falcon_vrfy *falcon_vrfy_new(void);
 
 /*
- * Maximum signature size (in bytes) when using the COMPRESSED format.
- * In practice, the signature will be shorter.
+ * Release a falcon_vrfy structure and all corresponding resources. This
+ * function may be called at any time, cancelling the currently ongoing
+ * signature verification. If 'fv' is NULL, then this function does
+ * nothing.
  */
-#define FALCON_SIG_COMPRESSED_MAXSIZE(logn) \
-	(((((11u << (logn)) + (101u >> (10 - (logn)))) \
-	+ 7) >> 3) + 41)
+void falcon_vrfy_free(falcon_vrfy *fv);
 
 /*
- * Signature size (in bytes) when using the PADDED format. The size
- * is exact.
+ * Set the public key against which signatures are to be verified.
+ * The encoded public key is provided as pointer 'pkey', with encoded
+ * length 'len' bytes.
+ *
+ * Returned value is 1 on success, 0 on error (invalid public key encoding).
  */
-#define FALCON_SIG_PADDED_SIZE(logn) \
-	(44u + 3 * (256u >> (10 - (logn))) + 2 * (128u >> (10 - (logn))) \
-	+ 3 * (64u >> (10 - (logn))) + 2 * (16u >> (10 - (logn))) \
-	- 2 * (2u >> (10 - (logn))) - 8 * (1u >> (10 - (logn))))
+int falcon_vrfy_set_public_key(falcon_vrfy *fv,
+	const void *pkey, size_t len);
 
 /*
- * Signature size (in bytes) when using the CT format. The size is exact.
+ * Reset the hashing mechanism for a new message. The 'r' value is the
+ * random nonce which was used when generating the signature; it has
+ * length 'rlen' bytes.
  */
-#define FALCON_SIG_CT_SIZE(logn) \
-	((3u << ((logn) - 1)) - ((logn) == 3) + 41)
+void falcon_vrfy_start(falcon_vrfy *fv, const void *r, size_t rlen);
 
 /*
- * Temporary buffer size for key pair generation.
+ * Inject some message bytes. These bytes are added to the current message
+ * to verify. The message bytes are pointed to by 'data' and have length
+ * 'len' (in bytes). If 'len' is 0, then this call does nothing.
  */
-#define FALCON_TMPSIZE_KEYGEN(logn) \
-	(((logn) <= 3 ? 272u : (28u << (logn))) + (3u << (logn)) + 7)
+void falcon_vrfy_update(falcon_vrfy *fv, const void *data, size_t len);
 
 /*
- * Temporary buffer size for computing the pubic key from the private key.
+ * Verify the provided signature against the currently injected message and
+ * public key. The signature is in 'sig', of length 'len' bytes.
+ *
+ * Returned value is:
+ *   1   signature is valid
+ *   0   signature does not match the message + public key
+ *  -1   signature decoding error (invalid / wrong modulus or degree)
+ *  -2   public key was not set
  */
-#define FALCON_TMPSIZE_MAKEPUB(logn) \
-	((6u << (logn)) + 1)
-
-/*
- * Temporary buffer size for generating a signature ("dynamic" variant).
- */
-#define FALCON_TMPSIZE_SIGNDYN(logn) \
-	((78u << (logn)) + 7)
-
-/*
- * Temporary buffer size for generating a signature ("tree" variant, with
- * an expanded key).
- */
-#define FALCON_TMPSIZE_SIGNTREE(logn) \
-	((50u << (logn)) + 7)
-
-/*
- * Temporary buffer size for expanding a private key.
- */
-#define FALCON_TMPSIZE_EXPANDPRIV(logn) \
-	((52u << (logn)) + 7)
-
-/*
- * Size of an expanded private key.
- */
-#define FALCON_EXPANDEDKEY_SIZE(logn) \
-	(((8u * (logn) + 40) << (logn)) + 8)
-
-/*
- * Temporary buffer size for verifying a signature.
- */
-#define FALCON_TMPSIZE_VERIFY(logn) \
-	((8u << (logn)) + 1)
+int falcon_vrfy_verify(falcon_vrfy *fv, const void *sig, size_t len);
 
 /* ==================================================================== */
 /*
- * SHAKE256.
+ * Signature generator.
+ *
+ * An opaque falcon_sign context structure must be allocated with
+ * falcon_sign_new(). That context must be ultimately released with
+ * falcon_sign_free().
+ *
+ * The private key is set with falcon_sign_set_private_key(). The public
+ * key must be set at some point before calling falcon_sign_generate(),
+ * but part or all of the signed message may be injected before setting
+ * the private key. Several successive signature generations can be
+ * performed with the same context; the private key is preserved, unless
+ * changed explicitly.
+ *
+ * To start a new signature generation, call falcon_sign_start(). Then
+ * inject the signed message data with zero, one or more calls to
+ * falcon_sign_update(). Finally, falcon_sign_verify() checks the
+ * signature against the injected message and the set public key.
+ *
+ * Falcon signatures include an explicit nonce element. Normally, the
+ * signature generator produces it as a sequence of 40 random bytes;
+ * this is done in falcon_sign_start(). Alternatively,
+ * falcon_sign_start_external_nonce() can be called instead of
+ * falcon_sign_start(), to provide the nonce explicitly. In that case,
+ * the caller is responsible for nonce generation. Nonces shall be
+ * generated with a cryptographically strong RNG.
  */
 
 /*
- * Context for a SHAKE256 computation. Contents are opaque.
- * Contents are pure data with no pointer; they need not be released
- * explicitly and don't reference any other allocated resource. The
- * caller is responsible for allocating the context structure itself,
- * typically on the stack.
+ * Signature generation context.
  */
-typedef struct {
-	uint64_t opaque_contents[26];
-} shake256_context;
+typedef struct falcon_sign_ falcon_sign;
 
 /*
- * Initialize a SHAKE256 context to its initial state. The state is
- * then ready to receive data (with shake256_inject()).
+ * Allocate a new falcon_sign structure. It will have to be released later
+ * on with falcon_sign_free().
+ *
+ * This function returns NULL on memory allocation failure.
  */
-void shake256_init(shake256_context *sc);
+falcon_sign *falcon_sign_new(void);
 
 /*
- * Inject some data bytes into the SHAKE256 context ("absorb" operation).
- * This function can be called several times, to inject several chunks
- * of data of arbitrary length.
+ * Release a falcon_sign structure and all corresponding resources. This
+ * function may be called at any time, cancelling the currently ongoing
+ * signature generation. If 'fs' is NULL, then this function does
+ * nothing.
  */
-void shake256_inject(shake256_context *sc, const void *data, size_t len);
+void falcon_sign_free(falcon_sign *fs);
 
 /*
- * Flip the SHAKE256 state to output mode. After this call, shake256_inject()
- * can no longer be called on the context, but shake256_extract() can be
- * called.
+ * Set the random seed for signature generation. If this function is called,
+ * then the internal RNG used for this specific signature will be seeded
+ * with the provided value.
  *
- * Flipping is one-way; a given context can be converted back to input
- * mode only by initializing it again, which forgets all previously
- * injected data.
+ * If 'replace' is non-zero, then the provided seed _replaces_ any other
+ * seed currently set in the RNG. This can be used for test purposes, to
+ * ensure reproducible behaviour. Otherwise, the provided seed is added
+ * to the internal pool, which will also use the system RNG.
+ *
+ * When falcon_sign_start() is called, the following happens:
+ *
+ *  - If falcon_sign_set_seed() was called with a non-zero 'replace'
+ *    parameter, then that value is used as seed, along with all seeds
+ *    injected with subsequent falcon_sign_set_seed() with a zero
+ *    'replace'.
+ *
+ *  - Otherwise, the system RNG is used to obtain fresh randomness. If
+ *    the system RNG fails, then a failure is reported and the engine
+ *    is not started. If the system RNG succeeds, then the fresh randomness
+ *    is added to all seeds provided with falcon_sign_set_seed() calls.
  */
-void shake256_flip(shake256_context *sc);
+void falcon_sign_set_seed(falcon_sign *fs,
+	const void *seed, size_t len, int replace);
 
 /*
- * Extract bytes from the SHAKE256 context ("squeeze" operation). The
- * context must have been flipped to output mode (with shake256_flip()).
- * Arbitrary amounts of data can be extracted, in one or several calls
- * to this function.
+ * Set the private key for signature generation. The encoded private key
+ * is provided as pointer 'skey', with encoded length 'len' bytes.
+ *
+ * Returned value is 1 on success, 0 on error (invalid private key encoding
+ * or memory allocation failure).
  */
-void shake256_extract(shake256_context *sc, void *out, size_t len);
+int falcon_sign_set_private_key(falcon_sign *fs,
+	const void *skey, size_t len);
 
 /*
- * Initialize a SHAKE256 context as a PRNG from the provided seed.
- * This initializes the context, injects the seed, then flips the context
- * to output mode to make it ready to produce bytes.
+ * Reset the hashing mechanism for a new message. The "r" value shall
+ * point to a 40-byte buffer, which is filled with a newly-generated
+ * random nonce for this signature. That nonce value shall be conveyed
+ * to verifiers along with the signature (it is required for proper
+ * verification).
+ *
+ * Returned value is 1 on success, 0 on error. An error may be reported
+ * if no system RNG could be successfully used to produce the nonce.
  */
-void shake256_init_prng_from_seed(shake256_context *sc,
-	const void *seed, size_t seed_len);
+int falcon_sign_start(falcon_sign *fs, void *r /* 40 bytes */);
 
 /*
- * Initialize a SHAKE256 context as a PRNG, using an initial seed from
- * the OS-provided RNG. If there is no known/supported OS-provided RNG,
- * or if that RNG fails, then the context is not properly initialized
- * and FALCON_ERR_RANDOM is returned.
- *
- * Returned value: 0 on success, or a negative error code.
+ * Reset the hashing mechanism for a new message. The provided nonce 'r'
+ * (of length 'rlen' bytes) is used for computing the signature, and
+ * shall be used by verifiers to verify the signature. The caller is
+ * responsible for proper nonce generation: for security, that nonce
+ * shall be produced with a cryptographically strong RNG and have
+ * sufficient length to be unpredictable (40 bytes are recommended).
  */
-int shake256_init_prng_from_system(shake256_context *sc);
-
-/* ==================================================================== */
-/*
- * Key pair generation.
- */
+void falcon_sign_start_external_nonce(falcon_sign *fs,
+	const void *r, size_t rlen);
 
 /*
- * Generate a new keypair.
- *
- * The logarithm of the Falcon degree (logn) must be in the 1 to 10
- * range; values 1 to 8 correspond to reduced versions of Falcon that do
- * not provide adequate security and are meant for research purposes
- * only.
- *
- * The source of randomness is the provided SHAKE256 context *rng, which
- * must have been already initialized, seeded, and set to output mode (see
- * shake256_init_prng_from_seed() and shake256_init_prng_from_system()).
- *
- * The new private key is written in the buffer pointed to by privkey.
- * The size of that buffer must be specified in privkey_len; if that
- * size is too low, then this function fails with FALCON_ERR_SIZE. The
- * actual private key length can be obtained from the FALCON_PRIVKEY_SIZE()
- * macro.
- *
- * If pubkey is not NULL, then the new public key is written in the buffer
- * pointed to by pubkey. The size of that buffer must be specified in
- * pubkey_len; if that size is too low, then this function fails with
- * FALCON_ERR_SIZE. The actual public key length can be obtained from the
- * FALCON_PUBKEY_SIZE() macro.
- *
- * If pubkey is NULL then pubkey_len is ignored; the private key will
- * still be generated and written to privkey[], but the public key
- * won't be written anywhere. The public key can be later on recomputed
- * from the private key with falcon_make_public().
- *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_KEYGEN(logn) bytes.
- *
- * Returned value: 0 on success, or a negative error code.
+ * Inject some message bytes. These bytes are added to the current message
+ * to sign. The message bytes are pointed to by 'data' and have length
+ * 'len' (in bytes). If 'len' is 0, then this call does nothing.
  */
-int falcon_keygen_make(
-	shake256_context *rng,
-	unsigned logn,
-	void *privkey, size_t privkey_len,
-	void *pubkey, size_t pubkey_len,
-	void *tmp, size_t tmp_len);
+void falcon_sign_update(falcon_sign *fs, const void *data, size_t len);
 
 /*
- * Recompute the public key from the private key.
+ * Produce the signature. The signature being a short vector, it can
+ * optionally be compressed; the compression algorithm to use is set
+ * in the 'comp' parameter, and shall be one of the FALCON_COMP_*
+ * constants.
  *
- * The private key is provided encoded. This function decodes the
- * private key and verifies that its length (in bytes) is exactly
- * the provided value privkey_len (trailing extra bytes are not
- * tolerated).
+ * Returned value is the signature length, in bytes.
  *
- * The public key is written in the buffer pointed to by pubkey. The
- * size (in bytes) of the pubkey buffer must be provided in pubkey_len;
- * if it is too short for the public key, then FALCON_ERR_SIZE is
- * returned. The actual public key size can be obtained from the
- * FALCON_PUBKEY_SIZE() macro.
+ * On error, 0 is returned. Error conditions include the following:
  *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_MAKEPUB(logn) bytes.
+ *  - Private key was not set.
+ *  - The system RNG could not be located, or failed.
+ *  - The signature length would exceed the output buffer length (sig_max_len).
  *
- * Returned value: 0 on success, or a negative error code.
+ * If the private key has degree N, then an uncompressed signature
+ * (FALCON_COMP_NONE) has length exactly 2*N+1 bytes. With Huffman
+ * compression, the signature is shorter with overwhelming probability,
+ * but its exact length may vary. Degree N is normally 512 or 1024,
+ * depending on key parameters.
  */
-int falcon_make_public(
-	void *pubkey, size_t pubkey_len,
-	const void *privkey, size_t privkey_len,
-	void *tmp, size_t tmp_len);
-
-/*
- * Get the Falcon degree from an encoded private key, public key or
- * signature. Returned value is the logarithm of the degree (1 to 10),
- * or a negative error code.
- */
-int falcon_get_logn(void *obj, size_t len);
+size_t falcon_sign_generate(falcon_sign *fs,
+	void *sig, size_t sig_max_len, int comp);
 
 /* ==================================================================== */
 /*
- * Signature generation.
+ * Key generator.
+ *
+ * Key pair generation uses an allocated context. That context keeps
+ * track of the internal PRNG (this allows external seeding for
+ * reproducible key generation) and contains some tables that can be
+ * reused for producing several key pairs.
  */
 
 /*
- * Sign the data provided in buffer data[] (of length data_len bytes),
- * using the private key held in privkey[] (of length privkey_len bytes).
- *
- * The source of randomness is the provided SHAKE256 context *rng, which
- * must have been already initialized, seeded, and set to output mode (see
- * shake256_init_prng_from_seed() and shake256_init_prng_from_system()).
- *
- * The signature is written in sig[]. The caller must set *sig_len to
- * the maximum size of sig[]; if the signature computation is
- * successful, then *sig_len will be set to the actual length of the
- * signature. The signature length depends on the signature type,
- * which is specified with the sig_type parameter to one of the three
- * defined values FALCON_SIG_COMPRESSED, FALCON_SIG_PADDED or
- * FALCON_SIG_CT; for the last two of these, the signature length is
- * fixed (for a given Falcon degree).
- *
- * Regardless of the signature type, the process is constant-time with
- * regard to the private key. When sig_type is FALCON_SIG_CT, it is also
- * constant-time with regard to the signature value and the message data,
- * i.e. no information on the signature and the message may be inferred
- * from timing-related side channels.
- *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_SIGNDYN(logn) bytes.
- *
- * Returned value: 0 on success, or a negative error code.
+ * Key generation context.
  */
-int falcon_sign_dyn(shake256_context *rng,
-	void *sig, size_t *sig_len, int sig_type,
-	const void *privkey, size_t privkey_len,
-	const void *data, size_t data_len,
-	void *tmp, size_t tmp_len);
+typedef struct falcon_keygen_ falcon_keygen;
 
 /*
- * Expand a private key. The provided Falcon private key (privkey, of
- * size privkey_len bytes) is decoded and expanded into expanded_key[].
+ * Create a new falcon key generation context.
  *
- * The expanded_key[] buffer has size expanded_key_len, which MUST be at
- * least FALCON_EXPANDEDKEY_SIZE(logn) bytes (where 'logn' qualifies the
- * Falcon degree encoded in the private key and can be obtained with
- * falcon_get_logn()). Expanded key contents have an internal,
- * implementation-specific format. Expanded keys may be moved in RAM
- * only if their 8-byte alignment remains unchanged.
+ * In the binary case (ternary = 0), the 'logn' parameter is the base-2
+ * logarithm of the degree; it must be between 1 and 10 (normal Falcon
+ * parameters use logn = 9 or 10; lower values are for reduced test-only
+ * versions).
  *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_EXPANDPRIV(logn) bytes.
+ * In the ternary case (ternary = 1), the 'logn' parameter is the base-2
+ * logarithm of 2/3rd of the degree (e.g. logn is 9 for degree 768). In
+ * that case, 'logn' must lie between 2 and 9 (normal value is 9, lower
+ * values are for reduced test-only versions).
  *
- * Returned value: 0 on success, or a negative error code.
+ * Returned value is the new context, or NULL on error. Errors include
+ * out-of-range parameters, and memory allocation errors.
  */
-int falcon_expand_privkey(void *expanded_key, size_t expanded_key_len,
-	const void *privkey, size_t privkey_len,
-	void *tmp, size_t tmp_len);
+falcon_keygen *falcon_keygen_new(unsigned logn, int ternary);
 
 /*
- * Sign the data provided in buffer data[] (of length data_len bytes),
- * using the expanded private key held in expanded_key[], as generated
- * by falcon_expand_privkey().
- *
- * The source of randomness is the provided SHAKE256 context *rng, which
- * must have been already initialized, seeded, and set to output mode (see
- * shake256_init_prng_from_seed() and shake256_init_prng_from_system()).
- *
- * The signature is written in sig[]. The caller must set *sig_len to
- * the maximum size of sig[]; if the signature computation is
- * successful, then *sig_len will be set to the actual length of the
- * signature. The signature length depends on the signature type,
- * which is specified with the sig_type parameter to one of the three
- * defined values FALCON_SIG_COMPRESSED, FALCON_SIG_PADDED or
- * FALCON_SIG_CT; for the last two of these, the signature length is
- * fixed (for a given Falcon degree).
- *
- * Regardless of the signature type, the process is constant-time with
- * regard to the private key. When sig_type is FALCON_SIG_CT, it is also
- * constant-time with regard to the signature value and the message data,
- * i.e. no information on the signature and the message may be inferred
- * from timing-related side channels.
- *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_SIGNTREE(logn) bytes.
- *
- * Returned value: 0 on success, or a negative error code.
+ * Release a previously allocated key generation context, and all
+ * corresponding resources. If 'fk' is NULL then this function does
+ * nothing.
  */
-int falcon_sign_tree(shake256_context *rng,
-	void *sig, size_t *sig_len, int sig_type,
-	const void *expanded_key,
-	const void *data, size_t data_len,
-	void *tmp, size_t tmp_len);
-
-/* ==================================================================== */
-/*
- * Signature generation, streamed API.
- *
- * In the streamed API, the caller performs the data hashing externally.
- * An initialization function (falcon_sign_start()) is first called; it
- * generates and returns a random 40-byte nonce value; it also initializes
- * a SHAKE256 context and injects the nonce value in that context. The
- * caller must then inject the data to sign in the SHAKE256 context, and
- * finally call falcon_sign_dyn_finish() or falcon_sign_tree_finish() to
- * finalize the signature generation.
- */
+void falcon_keygen_free(falcon_keygen *fk);
 
 /*
- * Start a signature generation context.
- *
- * A 40-byte nonce is generated and written in nonce[]. The *hash_data
- * context is also initialized, and the nonce is injected in that context.
- *
- * The source of randomness is the provided SHAKE256 context *rng, which
- * must have been already initialized, seeded, and set to output mode (see
- * shake256_init_prng_from_seed() and shake256_init_prng_from_system()).
- *
- * Returned value: 0 on success, or a negative error code.
+ * Get the maximum encoded size (in bytes) of a private key that can be
+ * generated with the provided context. When using no compression
+ * (FALCON_COMP_NONE), this is the exact size; with compression,
+ * private key will be shorter.
  */
-int falcon_sign_start(shake256_context *rng,
-	void *nonce,
-	shake256_context *hash_data);
+size_t falcon_keygen_max_privkey_size(falcon_keygen *fk);
 
 /*
- * Finish a signature generation operation, using the private key held
- * in privkey[] (of length privkey_len bytes). The hashed nonce + message
- * is provided as the SHAKE256 context *hash_data, which must still be
- * in input mode (i.e. not yet flipped to output mode). That context is
- * modified in the process.
- *
- * The nonce value (which was used at the start of the hashing process,
- * usually as part of a falcon_sign_start() call) must be provided again,
- * because it is encoded into the signature. The nonce length is 40 bytes.
- *
- * The source of randomness is the provided SHAKE256 context *rng, which
- * must have been already initialized, seeded, and set to output mode (see
- * shake256_init_prng_from_seed() and shake256_init_prng_from_system()).
- *
- * The signature is written in sig[]. The caller must set *sig_len to
- * the maximum size of sig[]; if the signature computation is
- * successful, then *sig_len will be set to the actual length of the
- * signature. The signature length depends on the signature type,
- * which is specified with the sig_type parameter to one of the three
- * defined values FALCON_SIG_COMPRESSED, FALCON_SIG_PADDED or
- * FALCON_SIG_CT; for the last two of these, the signature length is
- * fixed (for a given Falcon degree).
- *
- * Regardless of the signature type, the process is constant-time with
- * regard to the private key. When sig_type is FALCON_SIG_CT, it is also
- * constant-time with regard to the signature value and the message data,
- * i.e. no information on the signature and the message may be inferred
- * from timing-related side channels.
- *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_SIGNDYN(logn) bytes.
- *
- * Returned value: 0 on success, or a negative error code.
+ * Get the maximum encoded size (in bytes) of a public key that can be
+ * generated with the provided context. Since public keys are uncompressed,
+ * the returned size is always exact.
  */
-int falcon_sign_dyn_finish(shake256_context *rng,
-	void *sig, size_t *sig_len, int sig_type,
-	const void *privkey, size_t privkey_len,
-	shake256_context *hash_data, const void *nonce,
-	void *tmp, size_t tmp_len);
+size_t falcon_keygen_max_pubkey_size(falcon_keygen *fk);
 
 /*
- * Finish a signature generation operation, using the expanded private
- * key held in expanded_key[] (as obtained from
- * falcon_expand_privkey()). The hashed nonce + message is provided as
- * the SHAKE256 context *hash_data, which must still be in input mode
- * (i.e. not yet flipped to output mode). That context is modified in
- * the process.
+ * Set the random seed for key pair generation. If this function is called,
+ * then the internal RNG used for this specific signature will be seeded
+ * with the provided value.
  *
- * The nonce value (which was used at the start of the hashing process,
- * usually as part of a falcon_sign_start() call) must be provided again,
- * because it is encoded into the signature. The nonce length is 40 bytes.
+ * If 'replace' is non-zero, then the provided seed _replaces_ any other
+ * seed currently set in the RNG. This can be used for test purposes, to
+ * ensure reproducible behaviour. Otherwise, the provided seed is added
+ * to the internal pool, which will also use the system RNG.
  *
- * The source of randomness is the provided SHAKE256 context *rng, which
- * must have been already initialized, seeded, and set to output mode (see
- * shake256_init_prng_from_seed() and shake256_init_prng_from_system()).
+ * When falcon_keygen_make() is called, the following happens:
  *
- * The signature is written in sig[]. The caller must set *sig_len to
- * the maximum size of sig[]; if the signature computation is
- * successful, then *sig_len will be set to the actual length of the
- * signature. The signature length depends on the signature type,
- * which is specified with the sig_type parameter to one of the three
- * defined values FALCON_SIG_COMPRESSED, FALCON_SIG_PADDED or
- * FALCON_SIG_CT; for the last two of these, the signature length is
- * fixed (for a given Falcon degree).
+ *  - If falcon_keygen_set_seed() was called with a non-zero 'replace'
+ *    parameter, then that value is used as seed, along with all seeds
+ *    injected with subsequent falcon_keygen_set_seed() with a zero
+ *    'replace'.
  *
- * Regardless of the signature type, the process is constant-time with
- * regard to the private key. When sig_type is FALCON_SIG_CT, it is also
- * constant-time with regard to the signature value and the message data,
- * i.e. no information on the signature and the message may be inferred
- * from timing-related side channels.
- *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_SIGNTREE(logn) bytes.
- *
- * Returned value: 0 on success, or a negative error code.
+ *  - Otherwise, the system RNG is used to obtain fresh randomness. If
+ *    the system RNG fails, then a failure is reported and the engine
+ *    is not started. If the system RNG succeeds, then the fresh randomness
+ *    is added to all seeds provided with falcon_keygen_set_seed() calls.
  */
-int falcon_sign_tree_finish(shake256_context *rng,
-	void *sig, size_t *sig_len, int sig_type,
-	const void *expanded_key,
-	shake256_context *hash_data, const void *nonce,
-	void *tmp, size_t tmp_len);
-
-/* ==================================================================== */
-/*
- * Signature verification.
- */
+void falcon_keygen_set_seed(falcon_keygen *fk,
+	const void *seed, size_t len, int replace);
 
 /*
- * Verify the signature sig[] (of length sig_len bytes) with regards to
- * the provided public key pubkey[] (of length pubkey_len bytes) and the
- * message data[] (of length data_len bytes).
+ * Generate a new key pair.
  *
- * The sig_type parameter must be zero, or one of FALCON_SIG_COMPRESSED,
- * FALCON_SIG_PADDED or FALCON_SIG_CT. The function verifies that
- * the provided signature has the correct format. If sig_type is zero,
- * then the signature format is inferred from the signature header byte;
- * note that in that case, the signature is malleable (since a signature
- * value can be transcoded to other formats).
+ * The private key is written in 'privkey', using the compression algorithm
+ * specified by 'comp'. The public key is written in 'pubkey'.
  *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_VERIFY(logn) bytes.
+ * The '*privkey_len' and '*pubkey_len' must initially be set to the
+ * maximum lengths of the corresponding buffers; on output, they are
+ * modified to characterize the actual private and public key lengths.
  *
- * Returned value: 0 on success, or a negative error code.
+ * Returned value is 1 on success, 0 on error. An error is reported in the
+ * following cases:
+ *
+ *  - The system RNG failed to provide appropriate seeding.
+ *
+ *  - Some memory allocation failed.
+ *
+ *  - A new key pair could be internally produced, but could not be encoded
+ *    because one of the output buffers is too small.
  */
-int falcon_verify(const void *sig, size_t sig_len, int sig_type,
-	const void *pubkey, size_t pubkey_len,
-	const void *data, size_t data_len,
-	void *tmp, size_t tmp_len);
-
-/*
- * Start a streamed signature verification. The provided SHAKE256 context
- * *hash_data is initialized, and the nonce value (extracted from the
- * signature) is injected into it. The caller shall then inject the
- * message data into the SHAKE256 context, and finally call
- * falcon_verify_finish().
- *
- * Returned value: 0 on success, or a negative error code.
- */
-int falcon_verify_start(shake256_context *hash_data,
-	const void *sig, size_t sig_len);
-
-/*
- * Finish a streamed signature verification. The signature sig[] (of
- * length sig_len bytes) is verified against the provided public key
- * pubkey[] (of length pubkey_len bytes) and the hashed message. The
- * hashed message is provided as a SHAKE256 context *hash_data;
- * that context must have received the nonce and the message itself
- * (usually, the context is initialized and the nonce injected as
- * part of a falcon_verify_start() call), and still be in input
- * mode (not yet flipped to output mode). *hash_data is modified by
- * the verification process.
- *
- * The sig_type parameter must be zero, or one of FALCON_SIG_COMPRESSED,
- * FALCON_SIG_PADDED or FALCON_SIG_CT. The function verifies that
- * the provided signature has the correct format. If sig_type is zero,
- * then the signature format is inferred from the signature header byte;
- * note that in that case, the signature is malleable (since a signature
- * value can be transcoded to other formats).
- *
- * The tmp[] buffer is used to hold temporary values. Its size tmp_len
- * MUST be at least FALCON_TMPSIZE_VERIFY(logn) bytes.
- *
- * Returned value: 0 on success, or a negative error code.
- */
-int falcon_verify_finish(const void *sig, size_t sig_len, int sig_type,
-	const void *pubkey, size_t pubkey_len,
-	shake256_context *hash_data,
-	void *tmp, size_t tmp_len);
+int falcon_keygen_make(falcon_keygen *fk, int comp,
+	void *privkey, size_t *privkey_len,
+	void *pubkey, size_t *pubkey_len);
 
 /* ==================================================================== */
 
