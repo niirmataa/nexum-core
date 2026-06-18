@@ -18,7 +18,6 @@ use nxms_escrow_orchestrator::operator_escrow::*;
 use privai_chain::hash::falcon_pk_hash;
 use privai_chain::note::SpendPolicy;
 use privai_chain::CanonicalDecode;
-use privai_chain::CanonicalEncode;
 
 fn h(fill: u8) -> Hash32 {
     [fill; 32]
@@ -26,6 +25,21 @@ fn h(fill: u8) -> Hash32 {
 
 fn fake_falcon_pk(fill: u8) -> Vec<u8> {
     vec![fill; 897]
+}
+
+fn escrow_policy_commit(
+    buyer_pk_hash: Hash32,
+    merchant_pk_hash: Hash32,
+    operator_pk_hash: Hash32,
+    timeout_block: u64,
+) -> Hash32 {
+    SpendPolicy::Escrow2of3 {
+        buyer_pk_hash,
+        merchant_pk_hash,
+        operator_pk_hash,
+        timeout_block,
+    }
+    .commitment()
 }
 
 #[test]
@@ -192,7 +206,7 @@ fn different_actions_produce_different_hashes() {
 
 #[test]
 fn full_control_plane_flow() {
-    let descriptor = EscrowFundingDescriptor {
+    let mut descriptor = EscrowFundingDescriptor {
         escrow_id: h(0x01),
         buyer_pk: h(0x10),
         merchant_pk: h(0x20),
@@ -208,6 +222,8 @@ fn full_control_plane_flow() {
     let buyer_h = falcon_pk_hash(&buyer_pk);
     let merchant_h = falcon_pk_hash(&fake_falcon_pk(0xC0));
     let operator_h = falcon_pk_hash(&operator_pk);
+    descriptor.spend_policy_commit =
+        escrow_policy_commit(buyer_h, merchant_h, operator_h, descriptor.timeout_blocks);
 
     // 1. Funding event arrives, operator verifies
     let mut observer = MockLedgerObserver::new(500);
@@ -542,7 +558,7 @@ fn canonical_tx_signing_hash_matches_privai_chain() {
 
 #[test]
 fn bridge_bundle_to_input_auth_correct_fields() {
-    let descriptor = EscrowFundingDescriptor {
+    let mut descriptor = EscrowFundingDescriptor {
         escrow_id: h(0x01),
         buyer_pk: h(0x10),
         merchant_pk: h(0x20),
@@ -552,12 +568,15 @@ fn bridge_bundle_to_input_auth_correct_fields() {
         timeout_blocks: 2000,
     };
 
-    let snapshot = build_snapshot(&descriptor, h(0xBB));
     let buyer_pk = fake_falcon_pk(0xB0);
     let operator_pk = fake_falcon_pk(0xD0);
     let buyer_h = falcon_pk_hash(&buyer_pk);
     let merchant_h = falcon_pk_hash(&fake_falcon_pk(0xC0));
     let operator_h = falcon_pk_hash(&operator_pk);
+    descriptor.spend_policy_commit =
+        escrow_policy_commit(buyer_h, merchant_h, operator_h, descriptor.timeout_blocks);
+
+    let snapshot = build_snapshot(&descriptor, h(0xBB));
 
     let proposal = build_proposal(
         &snapshot,
