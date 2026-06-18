@@ -1,0 +1,136 @@
+name: nxms-mesh
+
+services:
+  node-01:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-01
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-01:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-02:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-02
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-02:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-03:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-03
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-03:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-04:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-04
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-04:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-05:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-05
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-05:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-06:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-06
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-06:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-07:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-07
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-07:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-08:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-08
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-08:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-09:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-09
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-09:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+  node-10:
+    build: { context: ., dockerfile: Dockerfile.node }
+    environment:
+      NODE_ID: node-10
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: "9000"
+      VAULT_DIR: /data/vault
+      PEERS_JSON: /data/peers.json
+    volumes:
+      - ./deploy/mesh/identities/node-10:/data/vault
+      - ./deploy/mesh/peers.json:/data/peers.json:ro
+    networks: [nxms-net]
+
+networks:
+  nxms-net:
+    driver: bridge

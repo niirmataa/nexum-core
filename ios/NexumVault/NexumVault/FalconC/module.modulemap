@@ -1,0 +1,4 @@
+module FalconC {
+    header "include/falcon.h"
+    export *
+}

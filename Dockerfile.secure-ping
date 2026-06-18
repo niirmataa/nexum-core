@@ -1,0 +1,39 @@
+FROM alpine:3.21
+
+RUN apk add --no-cache \
+    build-base \
+    cmake \
+    git \
+    openssl-dev \
+    linux-headers \
+    libsodium-dev \
+    libsodium \
+    curl-dev \
+    rust \
+    cargo
+
+ENV LIBOQS_VERSION=0.10.1
+RUN git clone --depth 1 --branch ${LIBOQS_VERSION} https://github.com/open-quantum-safe/liboqs.git /src/liboqs && \
+    cd /src/liboqs && \
+    mkdir build && cd build && \
+    cmake \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DOQS_USE_OPENSSL=OFF \
+        -DOQS_MINIMAL_BUILD="KEM_frodokem_640_shake" \
+        -DOQS_DIST_BUILD=OFF \
+        -DBUILD_SHARED_LIBS=ON \
+        .. && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /src/liboqs
+
+ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV RUST_BACKTRACE=1
+
+WORKDIR /src/nexum-core
+COPY . .
+
+RUN cargo test --test secure_ping --no-run
+
+CMD ["cargo", "test", "--test", "secure_ping", "--", "--nocapture"]

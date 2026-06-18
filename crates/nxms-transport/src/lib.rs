@@ -9,6 +9,8 @@ pub mod crypto;
 pub mod host_identity;
 #[cfg(feature = "crypto")]
 pub mod host_vault;
+#[cfg(feature = "crypto")]
+pub mod p2p;
 pub mod peers;
 #[cfg(feature = "security")]
 pub mod security;

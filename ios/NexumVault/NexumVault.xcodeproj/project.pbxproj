@@ -1,0 +1,499 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10001 /* NexumVaultApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10001; };
+		A10002 /* VaultKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10002; };
+		A10003 /* Challenge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003; };
+		A10004 /* AuditEntry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10004; };
+		A10005 /* CanonicalJSON.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10005; };
+		A10006 /* FalconCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006; };
+		A10007 /* VaultStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10007; };
+		A10008 /* ChallengeParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10008; };
+		A10009 /* SignatureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10009; };
+		A10010 /* CallbackClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10010; };
+		A10011 /* AuditLogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011; };
+		A10012 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012; };
+		A10013 /* BiometricAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10013; };
+		A10014 /* VaultHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014; };
+		A10015 /* CreateVaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015; };
+		A10016 /* PublicKeyView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10016; };
+		A10017 /* ScanChallengeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10017; };
+		A10018 /* ChallengeReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10018; };
+		A10019 /* SignatureResultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10019; };
+		A10020 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10020; };
+		A10021 /* CanonicalJSONTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10021; };
+		A10022 /* ChallengeParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022; };
+		A10023 /* SignatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023; };
+		A10030 /* falcon-enc.c in Sources */ = {isa = PBXBuildFile; fileRef = B10050; };
+		A10031 /* falcon-fft.c in Sources */ = {isa = PBXBuildFile; fileRef = B10051; };
+		A10032 /* falcon-keygen.c in Sources */ = {isa = PBXBuildFile; fileRef = B10052; };
+		A10033 /* falcon-sign.c in Sources */ = {isa = PBXBuildFile; fileRef = B10053; };
+		A10034 /* falcon-vrfy.c in Sources */ = {isa = PBXBuildFile; fileRef = B10054; };
+		A10035 /* frng.c in Sources */ = {isa = PBXBuildFile; fileRef = B10055; };
+		A10036 /* shake.c in Sources */ = {isa = PBXBuildFile; fileRef = B10056; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		B10001 /* NexumVaultApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NexumVaultApp.swift; sourceTree = "<group>"; };
+		B10002 /* VaultKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultKey.swift; sourceTree = "<group>"; };
+		B10003 /* Challenge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Challenge.swift; sourceTree = "<group>"; };
+		B10004 /* AuditEntry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditEntry.swift; sourceTree = "<group>"; };
+		B10005 /* CanonicalJSON.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonicalJSON.swift; sourceTree = "<group>"; };
+		B10006 /* FalconCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FalconCrypto.swift; sourceTree = "<group>"; };
+		B10007 /* VaultStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultStore.swift; sourceTree = "<group>"; };
+		B10008 /* ChallengeParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChallengeParser.swift; sourceTree = "<group>"; };
+		B10009 /* SignatureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignatureService.swift; sourceTree = "<group>"; };
+		B10010 /* CallbackClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallbackClient.swift; sourceTree = "<group>"; };
+		B10011 /* AuditLogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditLogStore.swift; sourceTree = "<group>"; };
+		B10012 /* QRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScanner.swift; sourceTree = "<group>"; };
+		B10013 /* BiometricAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricAuth.swift; sourceTree = "<group>"; };
+		B10014 /* VaultHomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultHomeView.swift; sourceTree = "<group>"; };
+		B10015 /* CreateVaultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateVaultView.swift; sourceTree = "<group>"; };
+		B10016 /* PublicKeyView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PublicKeyView.swift; sourceTree = "<group>"; };
+		B10017 /* ScanChallengeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanChallengeView.swift; sourceTree = "<group>"; };
+		B10018 /* ChallengeReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChallengeReviewView.swift; sourceTree = "<group>"; };
+		B10019 /* SignatureResultView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignatureResultView.swift; sourceTree = "<group>"; };
+		B10020 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		B10021 /* CanonicalJSONTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanonicalJSONTests.swift; sourceTree = "<group>"; };
+		B10022 /* ChallengeParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChallengeParserTests.swift; sourceTree = "<group>"; };
+		B10023 /* SignatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignatureTests.swift; sourceTree = "<group>"; };
+		B10030 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B10031 /* FalconBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FalconBridge.h; sourceTree = "<group>"; };
+		B10040 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B10041 /* falcon.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = falcon.h; sourceTree = "<group>"; };
+		B10042 /* internal.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = internal.h; sourceTree = "<group>"; };
+		B10043 /* shake.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = shake.h; sourceTree = "<group>"; };
+		B10044 /* fpr-double.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "fpr-double.h"; sourceTree = "<group>"; };
+		B10050 /* falcon-enc.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c; path = "falcon-enc.c"; sourceTree = "<group>"; };
+		B10051 /* falcon-fft.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c; path = "falcon-fft.c"; sourceTree = "<group>"; };
+		B10052 /* falcon-keygen.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c; path = "falcon-keygen.c"; sourceTree = "<group>"; };
+		B10053 /* falcon-sign.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c; path = "falcon-sign.c"; sourceTree = "<group>"; };
+		B10054 /* falcon-vrfy.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c; path = "falcon-vrfy.c"; sourceTree = "<group>"; };
+		B10055 /* frng.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c; path = frng.c; sourceTree = "<group>"; };
+		B10056 /* shake.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c; path = shake.c; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C10001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		D10001 = {
+			isa = PBXGroup;
+			children = (
+				D10002 /* NexumVault */,
+				D10003 /* NexumVaultTests */,
+			);
+			sourceTree = "<group>";
+		};
+		D10002 /* NexumVault */ = {
+			isa = PBXGroup;
+			children = (
+				D10010 /* App */,
+				D10011 /* Models */,
+				D10012 /* Services */,
+				D10013 /* Views */,
+				D10014 /* Bridging */,
+				D10016 /* FalconC */,
+				D10015 /* Resources */,
+				B10040 /* Assets.xcassets */,
+			);
+			path = NexumVault;
+			sourceTree = "<group>";
+		};
+		D10003 /* NexumVaultTests */ = {
+			isa = PBXGroup;
+			children = (
+				B10021 /* CanonicalJSONTests.swift */,
+				B10022 /* ChallengeParserTests.swift */,
+				B10023 /* SignatureTests.swift */,
+			);
+			path = NexumVaultTests;
+			sourceTree = "<group>";
+		};
+		D10010 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B10001 /* NexumVaultApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		D10011 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				B10002 /* VaultKey.swift */,
+				B10003 /* Challenge.swift */,
+				B10004 /* AuditEntry.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		D10012 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				B10005 /* CanonicalJSON.swift */,
+				B10006 /* FalconCrypto.swift */,
+				B10007 /* VaultStore.swift */,
+				B10008 /* ChallengeParser.swift */,
+				B10009 /* SignatureService.swift */,
+				B10010 /* CallbackClient.swift */,
+				B10011 /* AuditLogStore.swift */,
+				B10012 /* QRScanner.swift */,
+				B10013 /* BiometricAuth.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		D10013 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				B10014 /* VaultHomeView.swift */,
+				B10015 /* CreateVaultView.swift */,
+				B10016 /* PublicKeyView.swift */,
+				B10017 /* ScanChallengeView.swift */,
+				B10018 /* ChallengeReviewView.swift */,
+				B10019 /* SignatureResultView.swift */,
+				B10020 /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		D10014 /* Bridging */ = {
+			isa = PBXGroup;
+			children = (
+				B10031 /* FalconBridge.h */,
+			);
+			path = Bridging;
+			sourceTree = "<group>";
+		};
+		D10015 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				B10030 /* Info.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		D10016 /* FalconC */ = {
+			isa = PBXGroup;
+			children = (
+				D10017 /* include */,
+				D10018 /* src */,
+			);
+			path = FalconC;
+			sourceTree = "<group>";
+		};
+		D10017 /* include */ = {
+			isa = PBXGroup;
+			children = (
+				B10041 /* falcon.h */,
+				B10042 /* internal.h */,
+				B10043 /* shake.h */,
+				B10044 /* fpr-double.h */,
+			);
+			path = include;
+			sourceTree = "<group>";
+		};
+		D10018 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				B10050 /* falcon-enc.c */,
+				B10051 /* falcon-fft.c */,
+				B10052 /* falcon-keygen.c */,
+				B10053 /* falcon-sign.c */,
+				B10054 /* falcon-vrfy.c */,
+				B10055 /* frng.c */,
+				B10056 /* shake.c */,
+			);
+			path = src;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E10001 /* NexumVault */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F10001;
+			buildPhases = (
+				G10001 /* Sources */,
+				C10001 /* Frameworks */,
+				G10002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NexumVault;
+			productName = NexumVault;
+			productReference = H10001;
+			productType = "com.apple.product-type.application";
+		};
+		E10002 /* NexumVaultTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F10002;
+			buildPhases = (
+				G10003 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				I10001,
+			);
+			name = NexumVaultTests;
+			productName = NexumVaultTests;
+			productReference = H10002;
+			productType = "com.apple.product-type.unit-test-bundle";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		J10001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = F10003;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = D10001;
+			productRefGroup = D10001;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E10001,
+				E10002,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		G10002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		G10001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10001,
+				A10002,
+				A10003,
+				A10004,
+				A10005,
+				A10006,
+				A10007,
+				A10008,
+				A10009,
+				A10010,
+				A10011,
+				A10012,
+				A10013,
+				A10014,
+				A10015,
+				A10016,
+				A10017,
+				A10018,
+				A10019,
+				A10020,
+				A10030,
+				A10031,
+				A10032,
+				A10033,
+				A10034,
+				A10035,
+				A10036,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		G10003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10021,
+				A10022,
+				A10023,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		I10001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E10001;
+			targetProxy = K10001;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		K10001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = J10001;
+			proxyType = 1;
+			remoteGlobalIDString = E10001;
+			remoteInfo = NexumVault;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXProductReference section */
+		H10001 /* NexumVault.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NexumVault.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		H10002 /* NexumVaultTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NexumVaultTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXProductReference section */
+
+/* Begin XCBuildConfiguration section */
+		L10001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NexumVault/Resources/Info.plist;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Nexum Vault uses Face ID to protect your vault keys and authorize Falcon signatures.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "";
+				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nexum.vault;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				SWIFT_OBJC_BRIDGING_HEADER = "NexumVault/Bridging/FalconBridge.h";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/NexumVault/FalconC/include",
+				);
+				CODE_SIGN_ENTITLEMENTS = NexumVault/NexumVault.entitlements;
+			};
+			name = Debug;
+		};
+		L10002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NexumVault/Resources/Info.plist;
+				INFOPLIST_KEY_NSFaceIDUsageDescription = "Nexum Vault uses Face ID to protect your vault keys and authorize Falcon signatures.";
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nexum.vault;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				SWIFT_OBJC_BRIDGING_HEADER = "NexumVault/Bridging/FalconBridge.h";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/NexumVault/FalconC/include",
+				);
+			};
+			name = Release;
+		};
+		L10003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nexum.vault.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NexumVault.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NexumVault";
+			};
+			name = Debug;
+		};
+		L10004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nexum.vault.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NexumVault.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/NexumVault";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		F10001 /* Build configuration list for PBXNativeTarget "NexumVault" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				L10001,
+				L10002,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F10002 /* Build configuration list for PBXNativeTarget "NexumVaultTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				L10003,
+				L10004,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F10003 /* Build configuration list for PBXProject "NexumVault" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				L10001,
+				L10002,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+	};
+	rootObject = J10001;
+}

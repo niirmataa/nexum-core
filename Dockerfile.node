@@ -1,0 +1,51 @@
+FROM alpine:3.21 AS builder
+
+RUN apk add --no-cache \
+    build-base \
+    cmake \
+    git \
+    openssl-dev \
+    linux-headers \
+    libsodium-dev \
+    curl-dev \
+    rust \
+    cargo
+
+ENV LIBOQS_VERSION=0.10.1
+RUN git clone --depth 1 --branch ${LIBOQS_VERSION} https://github.com/open-quantum-safe/liboqs.git /src/liboqs && \
+    cd /src/liboqs && mkdir build && cd build && \
+    cmake \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DOQS_USE_OPENSSL=OFF \
+        -DOQS_MINIMAL_BUILD="KEM_frodokem_640_shake" \
+        -DOQS_DIST_BUILD=OFF \
+        -DBUILD_SHARED_LIBS=ON \
+        .. && \
+    make -j$(nproc) && make install && rm -rf /src/liboqs
+
+WORKDIR /src/nexum
+COPY . .
+
+RUN cargo build --release --bin nexum-node && \
+    cp target/release/nexum-node /usr/local/bin/
+
+FROM alpine:3.21
+
+RUN apk add --no-cache libsodium curl libstdc++
+
+COPY --from=builder /usr/local/lib/liboqs.so* /usr/local/lib/
+COPY --from=builder /usr/local/bin/nexum-node /usr/local/bin/nexum-node
+
+ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV LISTEN_HOST=0.0.0.0
+ENV LISTEN_PORT=9000
+ENV VAULT_DIR=/data/vault
+ENV PEERS_JSON=/data/peers.json
+
+RUN mkdir -p /data/vault
+VOLUME /data
+
+EXPOSE 9000
+
+ENTRYPOINT ["/usr/local/bin/nexum-node"]

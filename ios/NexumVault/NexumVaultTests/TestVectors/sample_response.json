@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "type": "nexum.response",
+  "challengeId": "ch_01JXYZ1234567890ABCDEF",
+  "publicKey": "BASE64URL_ENCODED_FALCON_1024_PUBLIC_KEY",
+  "keyId": "vk_20260617_abc12345",
+  "algorithm": "Falcon-1024",
+  "signature": "BASE64URL_ENCODED_FALCON_SIGNATURE",
+  "nonce": "BASE64URL_ENCODED_SIGNER_NONCE_40_BYTES",
+  "signedAt": "2026-06-17T10:30:15Z",
+  "device": {
+    "name": "Alice iPhone",
+    "platform": "ios"
+  }
+}
