@@ -31,7 +31,7 @@ swiadomie odlozony.
 - [x] Domknac model jednorazowego `escrow admission artifact` od `AG-01 + AG-02` dla zwyklego `AUTO multisig`.
 
 ### B1. Bootstrap trustu i artefaktow runtime
-- [x] Domknac lifecycle `customer identity record` i `customer identity snapshot`.
+- [ ] Dostosowac lifecycle publicznej tozsamosci i snapshotu klienta do modelu bez kont, rejestracji i logowania; zamkniecie poprzedniego modelu `register/login` nie pokrywa nowego kontraktu.
 - [x] Domknac source of truth dla aktywnego `runtime trust bundle`.
 - [x] Domknac pochodzenie `host vault`, `peers.json` i `action_token_pub.pem`.
 - [x] Domknac zasade, ze `mailbox` tylko przesyla, a nie legalizuje runtime.
@@ -66,10 +66,24 @@ swiadomie odlozony.
 - [ ] Utrzymac `tools/nexum-cli` jako manual auth/crypto only.
 - [ ] Zwęzic `tools/nexum-cli` implementacyjnie do:
   - auth
-  - registration
+  - lokalny vault
   - challenge-response
   - sign / verify
   - key generation
+
+### F. Lokalny dashboard w Dockerze
+
+Zakres: haslo lokalnego vaulta, jawne zatwierdzenie challenge i podglad
+istniejacego escrow. Bez kont, rejestracji, logowania i WASM. Kontrakt:
+`NXMS_STACK_SOURCE_OF_TRUTH.md` sekcje 8a-8c. Plan wykonawczy:
+`reference/NXMS_LOCAL_DASHBOARD_PLAN.md`.
+
+- [ ] Zamrozic kontrakt bezkontowego challenge, powiazanie klucza z escrow, uprawnienie odczytu i lifecycle kluczy kanalu transportowego; nie uzywac legacy `register/login`.
+- [ ] Przygotowac graficzny przebieg na danych syntetycznych: Tor, vault, challenge, haslo, podglad i bledy; jawnie oznaczyc dane demonstracyjne.
+- [ ] Wydzielic natywny adapter vault/podpis i przejrzec tylko uzywana sciezke; pelny review starego CLI pozostaje odlozony.
+- [ ] Dodac lokalny backend i adapter customer service przez Tor z kanonicznym `NxmsEnvelope`.
+- [ ] Przygotowac obrazy runtime i Compose: hostowy loopback, trwaly zaszyfrowany vault, limity i brak dostepu do socketu Dockera.
+- [ ] Potwierdzic caly przebieg oraz odmowy dostepu, replay, restart i utrate Tora; testy i kompilacje wykonywac kolejno z jednym zadaniem.
 
 ## Zasady ogólne
 

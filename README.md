@@ -15,6 +15,7 @@ Jesli README, starsze notatki albo kod pomocniczy sa z nim sprzeczne, wygrywa `N
 Dokumenty wspierajace:
 
 - `docs/NXMS_ROADMAP.md`
+- `docs/reference/NXMS_LOCAL_DASHBOARD_PLAN.md` - plan lokalnego klienta Docker z haslem vaulta, challenge i podgladem escrow; bez kont i WASM
 - `docs/PROJECT_STATUS.md`
 - `docs/reference/ARCHITECTURE.md`
 - `docs/reference/REPO_LAYOUT.md`

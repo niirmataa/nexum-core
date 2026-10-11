@@ -156,13 +156,13 @@ Data startu notatek: 2026-03-11
 
 - `customer service .onion` jest jedyną legalną ścieżką klienta do systemu.
 - Ta rola obsługuje:
-  - rejestrację,
-  - challenge-response,
+  - bezkontowy challenge-response,
   - `open escrow`,
   - `status`,
   - bounded customer event typu `delivered`.
 - Nie należy opisywać tej warstwy jako "HTTP auth layer"; istotna jest rola logiczna customer service `.onion`, nie lokalny adapter transportowy.
-- Dane z `nexum-cli register/challenge` nie mogą kończyć życia jako chwilowa sesja; muszą tworzyć trwały `customer identity record`.
+- Klient nie zakłada konta, nie rejestruje nicku i nie wykonuje logowania; proof wiąże lokalny klucz z zakresem konkretnego escrow.
+- Ewentualny `customer identity record` jest technicznym zapisem publicznego klucza, nie kontem; dla istniejącego escrow wiążący jest snapshot.
 - Przy `open escrow` system ma zamrażać `customer identity snapshot` dla `buyer` i `seller`.
 - Po `open escrow` i funding klient nie steruje runtime core.
 - Docelowy customer flow:
@@ -207,10 +207,12 @@ Data startu notatek: 2026-03-11
   - każdy host materializuje lokalnie `peers.json` i `action_token_pub.pem`,
   - host startuje tylko przy zgodności lokalnego sekretu z aktywnym trust bundle.
 - Lifecycle klienta:
-  - `nexum-cli` generuje lokalne klucze klienta,
-  - `customer service .onion` tworzy `customer_identity_record`,
+  - lokalny klient generuje lub odczytuje klucze z zaszyfrowanego vaulta,
+  - użytkownik podaje hasło lokalnego vaulta i jawnie zatwierdza challenge; do customer service trafia tylko publiczny materiał i proof,
+  - dostęp do istniejącego escrow wymaga klucza przypiętego do jego snapshotu, bez rejestracji i logowania,
   - `open escrow` zamraża `customer_identity_snapshot`,
   - późniejsza rotacja kluczy klienta nie zmienia już aktywnego escrow.
+- Lokalny dashboard v1 obsługuje powyższy challenge i podgląd istniejącego escrow; zakres określa `NXMS_STACK_SOURCE_OF_TRUTH.md`, sekcja 8c. WASM i pełny review historycznego CLI pozostają odłożone.
 - Lifecycle escrow:
   - orchestrator buduje escrow intent,
   - `AG-01 + AG-02` podpisują jednorazowy `escrow_admission_artifact`,

@@ -152,7 +152,7 @@ Dodatkowe zasady:
 
 `tools/nexum-cli`:
 - jest narzędziem ręcznym,
-- docelowo służy tylko do auth / registration / challenge-response / sign / verify / key generation primitives,
+- docelowo służy tylko do lokalnego vaulta / challenge-response / sign / verify / key generation primitives,
 - nie jest legalną ścieżką user escrow,
 - nie jest legalną ścieżką operator runtime control,
 - nie jest narzędziem administrowania `auth guard`,
@@ -171,6 +171,7 @@ Kierunek dla późniejszej ścieżki operatorskiej:
 
 Status bieżący repo:
 - obecny kod `tools/nexum-cli` nadal zawiera legacy/manual surface wykraczający poza target scope,
+- obecne `register` i `login` należą do starego modelu kont; lokalny dashboard nie używa ich jako ukrytych kroków,
 - dopóki ten drift nie zostanie usunięty z implementacji, obowiązującym kontraktem pozostaje ten dokument, a nie historyczny zakres komend.
 
 System ma działać bez wymogu użycia `nexum-cli`.
@@ -181,10 +182,11 @@ System ma działać bez wymogu użycia `nexum-cli`.
 
 `customer service .onion`:
 - jest jedyną legalną ścieżką klienta do systemu,
-- obsługuje `register`, `challenge-response`, `open escrow`, `status` i bounded customer events typu `delivered`,
+- obsługuje bezkontowy `challenge-response`, `open escrow`, `status` i bounded customer events typu `delivered`,
+- nie wymaga rejestracji, nicku, konta ani logowania użytkownika; uprawnienia wynikają z podpisu kluczem przypiętym do konkretnego escrow,
 - nie jest runtime core i nie prowadzi execution path escrow,
 - nie jest trust rootem i nie zastępuje guard quorum,
-- przekazuje do core nie tylko nicki, ale zamrożony `customer identity snapshot` przypięty do escrow.
+- przekazuje do core zamrożony `customer identity snapshot` z publiczną tożsamością kryptograficzną stron przypiętą do escrow.
 
 Docelowy flow klienta:
 - `buyer` otwiera escrow przez `customer service .onion`,
@@ -198,14 +200,43 @@ Docelowy flow klienta:
 
 ## 8b. Artefakty klienta
 
-`nexum-cli` pozostaje źródłem materiału kryptograficznego klienta, ale nie jest runtime core.
+Lokalny klient zarządza materiałem kryptograficznym klienta. `nexum-cli` może
+pozostać opcjonalnym narzędziem ręcznym po przeglądzie używanej ścieżki;
+dashboard nie zależy od uruchamiania jego historycznych komend.
 
 Docelowy kontrakt:
 - klient lokalnie generuje swoje klucze i sekrety wyłącznie po swojej stronie,
-- do `customer service .onion` trafia tylko publiczny bundle rejestracyjny i proof z challenge-response,
-- wynikiem rejestracji jest trwały `customer_identity_record`,
+- do `customer service .onion` trafia publiczny materiał klucza i proof z challenge-response; hasło vaulta i klucze prywatne pozostają lokalnie,
+- ewentualny `customer_identity_record` jest technicznym zapisem publicznego klucza, a nie kontem ani warunkiem osobnej rejestracji; autoryzacja istniejącego escrow wynika z jego snapshotu,
 - przy `open escrow` `customer service .onion` zamraża `customer_identity_snapshot` dla `buyer` i `seller`,
 - aktywne escrow nigdy nie przepina się cicho na późniejszą rotację kluczy klienta; nowe klucze działają dopiero dla nowych escrow.
+
+---
+
+## 8c. Lokalny dashboard klienta
+
+Przyjęty zakres pierwszej wersji:
+- wolny, samodzielnie uruchamiany klient w Dockerze z lokalnym interfejsem graficznym,
+- panel dostępny tylko na loopback hosta; bez publicznej strony, domeny ani hostingu,
+- połączenie z customer service wyłącznie przez Tor/onion,
+- bez kont, rejestracji, nicków i logowania; bez ukrytego wywoływania legacy `register/login`,
+- użytkownik widzi cel i adresata challenge, podaje hasło lokalnego vaulta i zatwierdza podpis,
+- challenge wiąże usługę, konkretne escrow, klucz klienta, zakres odczytu, nonce i termin ważności,
+- dostęp do istniejącego escrow wymaga klucza już przypiętego do niego; nowy klucz ani sam identyfikator escrow nie nadają tego prawa,
+- po weryfikacji możliwe jest krótkotrwałe uprawnienie wyłącznie do odczytu, przechowywane w pamięci; kolejne podpisy długoterminowym kluczem tożsamości wymagają jawnej zgody użytkownika,
+- automatyczne podpisy transportowe kanału odczytu mają osobny, ograniczony zakres i lifecycle, ustalany przed implementacją adaptera; nie wymagają utrzymywania odblokowanego vaulta,
+- GUI pokazuje stan, finansowanie, historię i świeżość danych escrow; nie wykonuje `open`, `delivered`, refund ani podpisywania/wysyłania transakcji,
+- natywny backend lokalny obsługuje vault i podpis challenge; WASM pozostaje odłożonym, osobnym kierunkiem,
+- role guardów, quorum `2 z 2`, admission i automatyczne prowadzenie multisig przez runtime pozostają odrębną warstwą.
+
+Lokalny dashboard nie tworzy drugiego flow escrow. Korzysta z tej samej
+customer service i kanonicznego `NxmsEnvelope`. Zamknięcie panelu nie kończy
+escrow prowadzonego przez runtime. Szczegóły wykonawcze i kolejność prac:
+`docs/reference/NXMS_LOCAL_DASHBOARD_PLAN.md`; aktywne zadania:
+`docs/NXMS_ROADMAP.md`.
+
+Status: przyjęty kontrakt docelowy; bezkontowa ścieżka klienta i dashboard
+wymagają implementacji oraz migracji ze starego modelu `register/login`.
 
 ---
 
@@ -304,7 +335,7 @@ Po wydaniu `escrow_admission_artifact`:
 
 ## 9c. Kanoniczna mapa artefaktów
 
-- `customer_identity_record`: powstaje w `customer service .onion` po poprawnym `register + challenge-response`; jest źródłem tożsamości klienta dla nowych escrow.
+- `customer_identity_record`: ewentualny techniczny zapis publicznego klucza po weryfikacji proofu; nie jest kontem i nie wymaga `register/login`. Dla istniejącego escrow wiążący pozostaje jego `customer_identity_snapshot`.
 - `customer_identity_snapshot`: powstaje przy `open escrow`; jest zamrożonym przypięciem identity `buyer` i `seller` do konkretnego escrow.
 - `host vault`: powstaje lokalnie na hoście runtime; zawiera prywatne klucze hosta i nie jest dostarczany przez guardy ani orchestrator.
 - `HostIdentityBundle`: powstaje lokalnie z publicznej połowy `host vault`; jest jedynym artefaktem hosta przekazywanym do guardów przy bootstrapie.
