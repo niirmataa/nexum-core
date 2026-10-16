@@ -248,6 +248,14 @@ Docelowy model:
 - brak publicznych bindów bez powodu
 - komunikacja między hostami przez onion / Tor
 
+Wyjątek OPS zatwierdzony 2026-10-13: lokalny developerski węzeł stagenetu
+może synchronizować publiczny łańcuch bezpośrednio z siecią Monero.
+Ten profil nie jest rolą runtime NXMS i nie podłączamy do niego portfeli
+ani wysyłania własnych transakcji. Przed testami właściwego działania
+NXMS przechodzimy na profil Tor; wyjątek synchronizacji nie jest fallbackiem
+runtime do clearnetu. Pozostają limity zasobów, RPC na loopback i brak
+portów kontenera publikowanych na hoście.
+
 Doprecyzowanie granic:
 - `Tor hidden service` jest jedyną docelową ścieżką sieciową między hostami.
 - `nxms-transport` jest jedyną warstwą end-to-end dla szyfrowania, podpisów, integralności i message binding.
@@ -384,7 +392,7 @@ Nie utrzymujemy:
 - break-glass jako zwykłego mechanizmu pracy,
 - krytycznych decyzji bez quorum guardów `2 z 2`,
 - aktywacji, recovery albo trust-changing operations bez `2x Falcon + KEM package`,
-- clearnet exposure dla `monerod`, `wallet-rpc`, `signer`, `mailbox` albo guardów.
+- clearnet exposure dla ról docelowego runtime: `monerod`, `wallet-rpc`, `signer`, `mailbox` albo guardów; wyjątek developerskiej synchronizacji OPS opisuje sekcja 9.
 
 ---
 

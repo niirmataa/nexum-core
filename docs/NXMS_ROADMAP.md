@@ -37,20 +37,23 @@ swiadomie odlozony.
 - [x] Domknac zasade, ze `mailbox` tylko przesyla, a nie legalizuje runtime.
 
 ### C. All-in-one logical split
-- [ ] Uruchomic na jednym hoście jako oddzielne role logiczne:
+- [x] Uruchomic na jednym hoście jako oddzielne role logiczne:
   - `ag-01`
   - `ag-02`
   - `orchestrator`
   - `mailbox`
   - `signer-a + monero-a`
   - `signer-b + monero-b`
-- [ ] Rozdzielic role na osobne konta systemowe.
-- [ ] Rozdzielic katalogi stanu, logi i sekrety.
-- [ ] Testowac relacje miedzyhostowe przez Tor juz na jednym hoście.
+  (etap C: ag-01/ag-02 = ceremonia + klucze, orchestrator = CLI + baza,
+  monero-a/monero-b = stub wallet-rpc; brakujace daemony w roadmapie D/E)
+- [x] Rozdzielic role na osobne konta systemowe.
+- [x] Rozdzielic katalogi stanu, logi i sekrety.
+- [x] Testowac relacje miedzyhostowe przez Tor juz na jednym hoście.
 
 ### D. Monero / Alpine / OpenRC
 - [ ] Dokonczyc source build Monero na Alpine/musl.
-- [ ] Potwierdzic `monerod-stagenet` over Tor-only.
+- [x] Potwierdzic `monerod-stagenet` over Tor-only przed podlaczeniem portfeli i runtime NXMS; poczatkowa synchronizacja OPS moze isc bezposrednio.
+- [ ] Wzmocnic lacznosc `monerod-stagenet` przez Tor (znane peery / `.onion`) i domknac rozstrzyganie nazw seedow poza Torem.
 - [ ] Potwierdzic `wallet-rpc` loopback-only.
 - [ ] Domknac OpenRC dla aktywnego runtime:
   - `nxms-mailbox`
@@ -79,7 +82,8 @@ istniejacego escrow. Bez kont, rejestracji, logowania i WASM. Kontrakt:
 `reference/NXMS_LOCAL_DASHBOARD_PLAN.md`.
 
 - [ ] Zamrozic kontrakt bezkontowego challenge, powiazanie klucza z escrow, uprawnienie odczytu i lifecycle kluczy kanalu transportowego; nie uzywac legacy `register/login`.
-- [ ] Przygotowac graficzny przebieg na danych syntetycznych: Tor, vault, challenge, haslo, podglad i bledy; jawnie oznaczyc dane demonstracyjne.
+- [x] Przygotowac graficzny przebieg na danych syntetycznych: Tor, vault, challenge, haslo, podglad i bledy; jawnie oznaczyc dane demonstracyjne. Prototyp: `apps/nexum-dashboard`.
+- [ ] Odebrac przebieg GUI w przegladarce na desktopie i malym ekranie, przed podlaczeniem prawdziwego vaulta.
 - [ ] Wydzielic natywny adapter vault/podpis i przejrzec tylko uzywana sciezke; pelny review starego CLI pozostaje odlozony.
 - [ ] Dodac lokalny backend i adapter customer service przez Tor z kanonicznym `NxmsEnvelope`.
 - [ ] Przygotowac obrazy runtime i Compose: hostowy loopback, trwaly zaszyfrowany vault, limity i brak dostepu do socketu Dockera.

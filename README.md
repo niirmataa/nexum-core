@@ -16,6 +16,7 @@ Dokumenty wspierajace:
 
 - `docs/NXMS_ROADMAP.md`
 - `docs/reference/NXMS_LOCAL_DASHBOARD_PLAN.md` - plan lokalnego klienta Docker z haslem vaulta, challenge i podgladem escrow; bez kont i WASM
+- [Lokalny dashboard DEMO](apps/nexum-dashboard/README.md) - pierwszy prototyp GUI na danych syntetycznych, bez prawdziwych kluczy i polaczen Tor/Monero
 - `docs/PROJECT_STATUS.md`
 - `docs/reference/ARCHITECTURE.md`
 - `docs/reference/REPO_LAYOUT.md`
