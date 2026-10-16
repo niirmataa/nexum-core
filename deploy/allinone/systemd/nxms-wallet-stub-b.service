@@ -1,0 +1,22 @@
+[Unit]
+Description=NXMS wallet-rpc STUB (etap C, monero-b boundary placeholder)
+After=network.target
+
+[Service]
+Type=simple
+User=monero-b
+Group=monero-b
+ExecStart=/usr/bin/python3 /opt/nxms/bin/wallet-rpc-stub.py 38089
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/nxms-monero-b/service.log
+StandardError=append:/var/log/nxms-monero-b/service.log
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/nxms-monero-b
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

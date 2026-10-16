@@ -1,0 +1,29 @@
+[Unit]
+Description=NXMS signer-a (all-in-one capability node)
+Documentation=file:///etc/nxms/signer-a/signer.toml
+After=network.target nxms-mailbox.service nxms-wallet-stub-a.service
+Wants=nxms-mailbox.service nxms-wallet-stub-a.service
+
+[Service]
+Type=simple
+User=nxms-signer-a
+Group=nxms-signer-a
+Environment=NXMS_SIGNER_ORCH_QUORUM_PROOF_VERIFY=true
+Environment=NXMS_ORCH_BIN=/opt/nxms/bin/nxms-escrow-orchestrator
+Environment=NXMS_ORCH_CONFIG_PATH=/etc/nxms/orch/orchestrator.toml
+Environment=NXMS_SIGNER_ORCH_BRIDGE_TOKEN_REF=vault:/run/secrets/nxms-signer-a/orch_bridge_token
+ExecStartPre=+/opt/nxms/bin/nxms-allinone-unseal signer-a
+ExecStart=/opt/nxms/bin/nxms-signer run --config /etc/nxms/signer-a/signer.toml
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/nxms-signer-a/service.log
+StandardError=append:/var/log/nxms-signer-a/service.log
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nxms-signer-a /var/log/nxms-signer-a /run/secrets/nxms-signer-a
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

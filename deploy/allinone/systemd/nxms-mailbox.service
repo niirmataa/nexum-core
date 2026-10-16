@@ -1,0 +1,24 @@
+[Unit]
+Description=NXMS mailbox (all-in-one role)
+Documentation=file:///etc/nxms/mailbox/mailbox.toml
+After=network.target
+
+[Service]
+Type=simple
+User=nxms-mailbox
+Group=nxms-mailbox
+ExecStartPre=+/opt/nxms/bin/nxms-allinone-unseal mailbox
+ExecStart=/opt/nxms/bin/nxms-mailbox serve --config /etc/nxms/mailbox/mailbox.toml
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/nxms-mailbox/service.log
+StandardError=append:/var/log/nxms-mailbox/service.log
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nxms-mailbox /var/log/nxms-mailbox /run/secrets/nxms-mailbox
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
