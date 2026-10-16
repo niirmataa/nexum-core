@@ -1,0 +1,28 @@
+name: nexum-dashboard-demo
+services:
+  dashboard:
+    build:
+      context: .
+    image: nexum-dashboard-demo:local
+    ports:
+      - "127.0.0.1:8787:8787"
+    networks:
+      - demo
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    user: "10001:10001"
+    cpus: 0.5
+    mem_limit: 128m
+    memswap_limit: 128m
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m
+    logging:
+      driver: local
+      options:
+        max-size: "2m"
+        max-file: "2"
+networks:
+  demo:
+    internal: true

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="description" content="Lokalny prototyp dashboardu Nexum. Wyłącznie demonstracyjne challenge, vault i podgląd escrow.">
+    <title>NXMS — lokalny podgląd escrow · DEMO</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Przejdź do treści</a>
+    <div class="demo-banner">
+      <span class="demo-label"><span class="demo-dot" aria-hidden="true"></span>Prototyp · dane demonstracyjne</span>
+      <span>Wszystko działa lokalnie na danych syntetycznych. Brak rzeczywistego połączenia z Torem i Monero.</span>
+    </div>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Etapy podglądu escrow">
+        <a class="brand" href="/" aria-label="Nexum — początek demonstracji">
+          <svg class="brand-mark" width="36" height="36" viewBox="0 0 36 36" fill="none" aria-hidden="true">
+            <path d="M8 26V10L28 26V10" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="8" cy="10" r="3" fill="currentColor"/>
+            <circle cx="28" cy="26" r="3" fill="currentColor"/>
+          </svg>
+          <span>Nexum<small>lokalny klient</small></span>
+        </a>
+
+        <div class="sidebar-label">TWÓJ PRZEBIEG</div>
+        <ol class="progress-list">
+          <li class="active" data-step="connect"><span class="step-number" aria-hidden="true">01</span><span>Połączenie<small>Lokalna demonstracja</small></span></li>
+          <li data-step="select"><span class="step-number" aria-hidden="true">02</span><span>Vault i escrow<small>Wybór kontekstu</small></span></li>
+          <li data-step="challenge"><span class="step-number" aria-hidden="true">03</span><span>Challenge<small>Twoje zatwierdzenie</small></span></li>
+          <li data-step="view"><span class="step-number" aria-hidden="true">04</span><span>Podgląd<small>Stan i historia</small></span></li>
+        </ol>
+
+        <div class="sidebar-footnote">
+          <span class="sidebar-symbol" aria-hidden="true">↗</span>
+          <p>Bez kont.<br>Bez rejestracji.<br><strong>Z jasnym przebiegiem.</strong></p>
+          <span class="sidebar-version">NXMS LOCAL / DEMO 0.1</span>
+        </div>
+      </aside>
+
+      <main id="main" class="main-content" tabindex="-1">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">NXMS / LOKALNY DASHBOARD</p>
+            <h1>Twoje escrow,<br class="mobile-break"> krok po kroku.</h1>
+            <p class="page-intro">Challenge, zatwierdzenie i czytelny podgląd — w jednym miejscu.</p>
+          </div>
+          <div class="header-badges">
+            <span class="pill"><svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M2 10s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5Z" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="2.3" stroke="currentColor" stroke-width="1.5"/></svg>Tylko odczyt</span>
+            <span id="connection-status" class="connection-status" role="status">Demonstracja nieuruchomiona</span>
+          </div>
+        </header>
+
+        <div id="notice" class="notice" role="status" aria-live="polite" aria-atomic="true">Gotowy do demonstracji. Używaj wyłącznie hasła testowego pokazanego w panelu.</div>
+
+        <section id="system-panel" class="panel system-panel" aria-labelledby="system-title">
+          <div class="panel-heading"><span class="section-index">00 / SYSTEM</span><span class="tag tag-live">Żywe dane · all-in-one</span></div>
+          <h2 id="system-title">Stan systemu NXMS</h2>
+          <div class="system-grid">
+            <div class="system-block"><h3>Role</h3><ul id="system-services" class="system-list"></ul></div>
+            <div class="system-block"><h3>Relacje Tor</h3><ul id="system-tor" class="system-list"></ul></div>
+            <div class="system-block"><h3>Trust bundle</h3><ul id="system-trust" class="system-list"></ul></div>
+            <div class="system-block"><h3>Agenci signerów</h3><ul id="system-agents" class="system-list"></ul></div>
+          </div>
+          <p class="form-caption">Dane operacyjne na żywo (role, ukryte serwisy, quorum). Podgląd escrow pozostaje demonstracyjny. Odświeżanie co 10 s.</p>
+        </section>
+
+        <div class="workspace">
+          <div class="stage-column">
+            <section id="step-connect" class="panel stage-panel" aria-labelledby="connect-title">
+              <div class="panel-heading"><span class="section-index">01 / POŁĄCZENIE</span><span class="tag">Środowisko DEMO</span></div>
+              <div class="connection-visual" aria-hidden="true">
+                <div class="network-node local-node"><svg width="28" height="28" viewBox="0 0 32 32" fill="none"><rect x="4" y="5" width="24" height="17" rx="3" stroke="currentColor" stroke-width="1.7"/><path d="M11 27h10M16 22v5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div>
+                <div class="network-path"><i></i><i></i><i></i></div>
+                <div class="network-node relay-node"><svg width="28" height="28" viewBox="0 0 32 32" fill="none"><path d="m16 3 11 6v14l-11 6-11-6V9l11-6Z" stroke="currentColor" stroke-width="1.7"/><path d="m5 9 11 7 11-7M16 16v13" stroke="currentColor" stroke-width="1.7"/></svg></div>
+                <div class="network-path"><i></i><i></i><i></i></div>
+                <div class="network-node escrow-node"><svg width="28" height="28" viewBox="0 0 32 32" fill="none"><path d="M16 3 27 8v8c0 7-11 13-11 13S5 23 5 16V8l11-5Z" stroke="currentColor" stroke-width="1.7"/><path d="m11 15 4 4 7-8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+              </div>
+              <div class="connection-labels" aria-hidden="true"><span>Lokalny klient</span><span>Transport</span><span>Escrow</span></div>
+              <h2 id="connect-title">Zacznij od połączenia.</h2>
+              <p class="body-copy">Przejdź przez przykładowy proces dostępu do escrow. Docelowo komunikację zapewni Tor; ten prototyp symuluje ją lokalnie.</p>
+              <div class="inline-note"><span class="note-icon" aria-hidden="true">i</span><p>Nie łączymy się z siecią, nie tworzymy multisig i nie podpisujemy prawdziwych danych.</p></div>
+              <div class="actions"><button id="connect-button" class="button primary" type="button">Rozpocznij demonstrację <span aria-hidden="true">→</span></button></div>
+            </section>
+
+            <section id="step-select" class="panel stage-panel" aria-labelledby="select-title" hidden>
+              <div class="panel-heading"><span class="section-index">02 / VAULT I ESCROW</span><span class="tag">Dane syntetyczne</span></div>
+              <h2 id="select-title">Wybierz escrow do podglądu.</h2>
+              <p class="body-copy">Wskaż jeden z przykładowych procesów. Challenge będzie dotyczył wyłącznie wybranego escrow.</p>
+              <div class="vault-card"><div class="vault-icon" aria-hidden="true">◇</div><div><strong>Vault demonstracyjny</strong><p>Lokalny · fikcyjny klucz testowy</p></div><span class="tag">DEMO</span></div>
+              <div id="escrow-list" class="escrow-list" role="group" aria-label="Dostępne escrow demonstracyjne"></div>
+              <div class="actions"><button id="select-button" class="button primary" type="button" disabled>Przejdź do challenge <span aria-hidden="true">→</span></button></div>
+            </section>
+
+            <section id="step-challenge" class="panel stage-panel" aria-labelledby="challenge-title" hidden>
+              <div class="panel-heading"><span class="section-index">03 / CHALLENGE</span><span class="tag">Symulacja podpisu</span></div>
+              <h2 id="challenge-title">Sprawdź, co zatwierdzasz.</h2>
+              <p class="body-copy">Ta demonstracja sprawdza przebieg zatwierdzenia dostępu do podglądu. Nie wykonuje rzeczywistego podpisu kryptograficznego.</p>
+              <dl class="challenge-details">
+                <div><dt>Usługa</dt><dd id="challenge-service" class="mono"></dd></div>
+                <div><dt>Escrow</dt><dd id="challenge-escrow" class="mono"></dd></div>
+                <div><dt>Zakres</dt><dd id="challenge-scope"></dd></div>
+                <div><dt>Ważność</dt><dd id="challenge-expires"></dd></div>
+                <div><dt>Identyfikator challenge</dt><dd id="challenge-id" class="mono"></dd></div>
+              </dl>
+              <form id="challenge-form" autocomplete="off">
+                <div class="form-field"><label for="vault-password">Hasło vaulta demonstracyjnego</label><input id="vault-password" name="demo_password" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="demo-password-help" required placeholder="Wpisz wyłącznie hasło testowe"></div>
+                <div id="demo-password-help" class="demo-password"><div><span class="small-label">JAWNE HASŁO DEMO</span><code>nexum-demo-2026</code></div><button id="fill-demo-password" class="text-button" type="button">Użyj hasła DEMO <span aria-hidden="true">↗</span></button></div>
+                <p class="form-caption">Nie wpisuj prawdziwego hasła ani danych swojego vaulta. Prototyp obsługuje wyłącznie syntetyczną tożsamość.</p>
+                <div class="actions"><button id="confirm-button" class="button primary" type="submit">Zatwierdź — symulacja podpisu <span aria-hidden="true">→</span></button><button id="cancel-button" class="button secondary" type="button">Anuluj</button></div>
+              </form>
+            </section>
+
+            <section id="step-view" class="view-stage" aria-labelledby="view-title" hidden>
+              <div class="panel escrow-summary">
+                <div class="panel-heading"><span class="section-index">04 / PODGLĄD ESCROW</span><span class="tag">Tylko odczyt · DEMO</span></div>
+                <div class="escrow-title-row"><div><p class="eyebrow">WYBRANE ESCROW</p><h2 id="view-title"><span id="escrow-id"></span></h2></div><span class="escrow-amount" id="escrow-amount"></span></div>
+                <div class="escrow-metrics"><div><span class="small-label">AKTUALNY ETAP</span><strong id="escrow-stage"></strong></div><div><span class="small-label">POTWIERDZENIA</span><strong id="escrow-confirmations"></strong></div></div>
+                <div class="address-block"><span class="small-label">ADRES WPŁATY — FIKCYJNY</span><p id="escrow-address" class="mono"></p><span class="form-caption">Adres demonstracyjny. Nie wysyłaj na niego środków.</span></div>
+                <div class="summary-footer"><p>Ostatnie odświeżenie <time id="updated-at"></time></p><button id="refresh-button" class="button secondary compact" type="button"><span aria-hidden="true">↻</span> Odśwież</button></div>
+              </div>
+              <div class="panel history-panel"><div class="panel-heading"><h3>Historia zdarzeń</h3><span class="subtle">Dane demonstracyjne</span></div><ol id="history" class="history-list" aria-label="Historia wybranego escrow"></ol></div>
+              <div class="view-footer"><p>Podgląd nie umożliwia wypłaty, zwrotu ani podpisania transakcji.</p><button id="lock-button" class="text-button" type="button">Zamknij podgląd <span aria-hidden="true">↗</span></button></div>
+            </section>
+          </div>
+
+          <aside class="context-column" aria-label="Informacje o demonstracji">
+            <section class="panel context-panel">
+              <span class="eyebrow">JASNE GRANICE</span>
+              <h3>Twoja zgoda.<br>Czytelny kontekst.</h3>
+              <ul class="principles-list"><li><span aria-hidden="true">01</span><div><strong>Bez konta</strong><p>Bez rejestracji i ekranu logowania.</p></div></li><li><span aria-hidden="true">02</span><div><strong>Zatwierdzony challenge</strong><p>Widzisz usługę, escrow i zakres przed potwierdzeniem.</p></div></li><li><span aria-hidden="true">03</span><div><strong>Tylko podgląd</strong><p>Stan procesu i historia, bez operacji na środkach.</p></div></li></ul>
+            </section>
+
+            <section class="simulation-panel" aria-labelledby="simulation-title">
+              <div class="simulation-heading"><h3 id="simulation-title">Sprawdź scenariusze</h3><span class="tag">DEMO</span></div>
+              <p>Wywołaj błąd lub wygaśnięcie i zobacz, jak reaguje interfejs.</p>
+              <div class="simulation-buttons"><button id="simulate-offline" class="simulation-button" type="button">Utrata połączenia <span aria-hidden="true">↗</span></button><button id="simulate-online" class="simulation-button" type="button" disabled>Przywróć połączenie <span aria-hidden="true">↗</span></button><button id="expire-challenge" class="simulation-button" type="button" disabled>Wygaś challenge <span aria-hidden="true">↗</span></button><button id="expire-access" class="simulation-button" type="button" disabled>Wygaś dostęp do podglądu <span aria-hidden="true">↗</span></button></div>
+            </section>
+            <p class="context-caption">Ten etap służy sprawdzeniu interfejsu. Prawdziwy vault, podpisy, Tor i status blockchaina zostaną podłączone osobno.</p>
+          </aside>
+        </div>
+        <footer class="page-footer"><span>NXMS · lokalny klient escrow</span><span>Prototyp interfejsu / wyłącznie dane DEMO</span></footer>
+      </main>
+    </div>
+  </body>
+</html>
