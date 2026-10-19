@@ -1,34 +1,43 @@
 #!/bin/bash
 # OPS: NXMS FLOW — realny przeplyw escrow na zywym stosie nxms-stack:
 # peer (nxms-peer) -> mailbox -> signer (nxms-signer) -> wallet-rpc (monero 0.18.5).
+# Quorum escrow: DWIE z TRZECH niezaleznych stron (signer-a arbiter,
+# signer-b seller, signer-c buyer) zatwierdzaja wydatek.
 #
 # Kroki na zywym stosie (curl + docker exec; kontenery nie sa przepinane):
-#   1. snapshot kontraktu: snapshot new + hash + 3 podpisy Falc onem
-#      (signer_a, signer_b, peer1 — klucze z host-vaultow) + activate w DB
-#      OBU signerow (snapshot_quorum = 3),
-#   2. przygotowanie portfela multisig 2/3: jesli get_balance zglasza
-#      multisig_import_needed, to export_multisig_info z :43NN i :44NN +
-#      import_multisig_info po drugiej stronie ("Preparation for spending"),
-#   3. txset NIEPODPISANY: wallet-rpc transfer z do_not_relay:true na adres
-#      ZEWNĘTRZNY (domyślnie adres faucetu) -> multisig_txset,
-#   4. action token dla sign_multisig: nxms-escrow-orchestrator action-token
-#      issue z issuer vaultem stosu (claims wg required_claims signera:
-#      op/scope=sign_multisig, role, sign_round wg roli, escrow_id,
-#      txset_hash=sha256(txset), snapshot_hash=hash POLITYKI snapshota,
-#      wallet_id/sandbox_id/audience z configu signera, nettype=stagenet),
-#   5. nxms-peer sign-req: push koperty NxmsEnvelope (ESCROW/1 tx_sign_req,
-#      FrodoKEM-640-SHAKE + Falcon-1024-CT) do mailboxa, long-poll na
-#      tx_sign_resp, ack,
-#   6. pending approve u signera z action tokenem -> wallet-rpc sign_multisig,
-#   7. wynik (status + signed_tx_data_hex) -> $STATE/task-NN/lib/flow-<ts>.json.
-#   8. --submit (opcjonalnie): druga runda sign_round (seller_second) + token
-#      submit_multisig z dowodami quorum (proof jti/req_id przez
-#      quorum-proof set) + pending submit -> wallet-rpc submit_multisig.
+#   1. snapshot kontraktu: snapshot new + hash + 3 podpisy Falconem
+#      (signer_a, signer_b, signer_c — klucze z host-vaultow) + activate w DB
+#      WSZYSTKICH signerow (snapshot_quorum = 3),
+#   2. przygotowanie portfela multisig 2/3: bezwarunkowa wymiana swiezych
+#      danych multisig miedzy WSZYSTKIMI trzema portfelami (a, b, buyer) —
+#      "Preparation for spending" wg monerodocs,
+#   3. txset: wallet-rpc transfer z do_not_relay:true na adres ZEWNĘTRZNY —
+#      z portfela TRZECIEJ strony (tej, ktora nie podpisuje w rundach),
+#   4. action tokeny dla sign_multisig: nxms-escrow-orchestrator action-token
+#      issue z issuer vaultem stosu (op=sign_multisig, role/sign_round wg roli:
+#      arbiter_first / buyer_second, txset_hash=sha256(txset),
+#      snapshot_hash=hash POLITYKI snapshota, wallet_id/sandbox_id/audience
+#      z configu signera),
+#   5. runda 1: nxms-peer sign-req -> signer_a (arbiter) -> pending approve
+#      z action tokenem -> wallet-rpc sign_multisig,
+#   6. runda 2: nxms-peer sign-req -> signer_c (buyer, sign_round=buyer_second)
+#      z drugim action tokenem -> pending approve -> wallet-rpc sign_multisig
+#      na ZBIERANYM txsecie (sign_multisig doklada podpis do txsetu),
+#   7. --submit: submit_multisig przez wallet-rpc na zbieranym txsecie po
+#      dwoch podpisach -> tx w sieci. Wynik -> $STATE/task-NN/lib/flow-<ts>.json.
 #
-# Uwagi (odchylenia od zalozen zlecenia, weryfikowane na zywym monero 0.18.5):
-#   - tworca txsetu NIE moze go podpisac ("Transaction already signed by this
-#     private key") — txset powstaje w portfelu INNYM niz signer rundy 1
-#     (dla signera signer_a = wallet-a, txset z wallet-b :44NN),
+# Realia Monero 0.18.5 (weryfikowane na zywym stosie):
+#   - tworca txsetu nie moze go podpisac ("Transaction already signed by this
+#     private key"); udzial tworcy jest PIERWSZYM podpisem, kazdy
+#     sign_multisig doklada kolejny i przy progu 2/3 DOMYKA zbierany txset
+#     ("Transaction is already fully signed" dla trzeciego udzialu),
+#   - wiec zbierany txset niesie DWA podpisy: tworcy (trzecia strona, proposal)
+#     + signera rundy 2 (buyer). Domyślny przebieg: podpisy seller+buyer
+#     (NXMS_FLOW_SIGNER=signer_b daje wariant arbiter+buyer — obie pary
+#     akceptowane; runda 1 zawsze idzie do wybranego signera, runda 2 do
+#     buyera),
+#   - udzial podpisu wymaga SWIEZYCH danych multisig wszystkich uczestnikow
+#     ("This signature was made with stale data"),
 #   - signer w trybie lab (bez runtime_trust_bundle_path w signer-*.toml;
 #     patrz naglowek tools/nxms-stack.sh) — tx_sign_req bez admission artifact,
 #   - snapshot_hash w action tokenze to hash POLITYKI (sha256 canonical JSON),
@@ -74,16 +83,18 @@ case "$task" in
     *) die 'Usage: bash tools/nxms-flow.sh <task-id> [kwota-xmr] [--submit]' ;;
 esac
 case "$SIGNER" in
-    signer_a) sx=a; other=b; other_id=signer_b; role=arbiter; round=arbiter_first ;;
-    signer_b) sx=b; other=a; other_id=signer_a; role=seller; round=seller_second ;;
+    signer_a) sx=a; role=arbiter; round=arbiter_first ;;
+    signer_b) sx=b; role=seller;  round=seller_second ;;
     *) die "NXMS_FLOW_SIGNER=signer_a|signer_b (wpisano '$SIGNER')" ;;
 esac
+# Runda 2 zawsze do signera buyera (signer_c) — trzecia niezalezna strona.
+SIGNER2=signer_c
 
 dir=$STATE/$task
 name=nxms-$task
 num=$((10#${task#task-}))
 port=$((4100 + num))
-wrpc_a=$((port + 200)); wrpc_b=$((port + 300))
+wrpc_a=$((port + 200)); wrpc_b=$((port + 300)); wrpc_c=$((port + 400))
 [ -d "$dir" ] || die "brak stanu $dir — najpierw: bash tools/nxms-stack.sh up"
 [ "$(dock container inspect --format '{{.State.Running}}' "$name" 2>/dev/null)" = true ] \
     || die "kontener $name nie dziala"
@@ -122,69 +133,27 @@ audience=$(cfgget "$sx" audience)
     || die "nie odczytano wallet_id/sandbox_id/audience z signer-$sx.toml"
 log "escrow=$escrow  signer=$SIGNER  kwota=$amt XMR  cel=$RELEASE_ADDR"
 
-# peers-file peera: zawiera KLUCZE ODBIORCY (obu signerow). Wpis kazdego
-# signera jest w allowlistach drugiego (swój wlasny wpis materialize pomija).
-$PY - "$dir/etc/peers-a.json" "$dir/etc/peers-b.json" "$dir/etc/peers-peer1.json" <<'PYEOF' \
+# peers-file peera: zawiera KLUCZE ODBIORCY (wszystkich trzech signerow).
+# Wpis kazdego signera jest w allowlistach pozostalych (swój wlasny wpis
+# materialize pomija).
+$PY - "$dir/etc/peers-a.json" "$dir/etc/peers-b.json" "$dir/etc/peers-c.json" "$dir/etc/peers-peer1.json" <<'PYEOF' \
     || die "nie zlozono peers-peer1.json"
-import json, sys
+import json, os, sys
 entries = {}
-for path in sys.argv[1:3]:
+for path in sys.argv[1:4]:
+    if not os.path.exists(path):
+        continue
     doc = json.load(open(path))
     for p in doc["peers"]:
         entries.setdefault(p["id"], p)
 if not entries:
     sys.exit("nxms-flow: pusty peer book")
-json.dump({"peers": list(entries.values())}, open(sys.argv[3], "w"), indent=2)
+json.dump({"peers": list(entries.values())}, open(sys.argv[4], "w"), indent=2)
 print(f"[flow] peers-peer1.json <- wpisy: {', '.join(entries)}")
 PYEOF
 
-# Konfig signera dla peera — potrzebny do 'snapshot sign' kluczem peer1
-# (wymagany pelny SignerConfig; mailbox_url musi byc .onion dla walidacji).
-cat > "$dir/etc/peer1-sign.toml" <<EOF
-# NXMS flow $task: konfig pomocniczy dla snapshot sign kluczem peer1.
-local_id = "peer1"
-signer_role = "arbiter"
-sandbox_id = "sandbox-$task-peer"
-wallet_id = "wallet-$task-peer"
-nettype = "stagenet"
-peers_path = "/nxms/etc/peers-peer1.json"
-host_vault_dir = "/nxms/lib/peer-vault"
-host_vault_passphrase = "vault:/nxms/secrets/peer_vault_pass"
-db_path = "/nxms/lib/peer1-sign.db"
-mailbox_url = "http://${onion:-peer1.invalid.onion}"
-tor_socks5h = "socks5h://127.0.0.1:$((9300 + num))"
-mailbox_push_token = "vault:/nxms/secrets/mailbox_push_token"
-mailbox_pull_token = "vault:/nxms/secrets/mailbox_pull_token_peer1"
-mailbox_ack_token = "vault:/nxms/secrets/mailbox_ack_token_peer1"
-worker_service_token = "vault:/nxms/secrets/worker_service_token_a"
-allow_remote_wallet_rpc = false
-production_hardening = false
-snapshot_quorum = 3
-pull_max = 20
-pull_wait_ms = 20000
-poll_interval_ms = 800
-default_ttl_secs = 86400
-max_txset_hex_len = 16777216
-mailbox_retry_attempts = 3
-mailbox_retry_backoff_ms = 50
-[wallet_rpc]
-endpoint = "http://127.0.0.1:$wrpc_a"
-wallet_name = "escrow_wallet_a"
-wallet_password = "vault:/nxms/secrets/wallet_pass_a"
-username = "vault:/nxms/secrets/wrpc_user_a"
-password = "vault:/nxms/secrets/wrpc_pass_a"
-[action_token]
-required = true
-issuer = "nxms-auth"
-audience = "sandbox:sandbox-$task-peer"
-algorithm = "EDDSA"
-public_key_pem_path = "/nxms/secrets/action_token_pub.pem"
-clock_skew_secs = 5
-max_ttl_secs = 120
-EOF
-
-# --- Krok 1: snapshot kontraktu (quorum 3: signer_a, signer_b, peer1) -------
-log "snapshot new + hash + 3 podpisy + activate w DB obu signerow..."
+# --- Krok 1: snapshot kontraktu (quorum 3: signer_a, signer_b, signer_c) ----
+log "snapshot new + hash + 3 podpisy (a/b/c) + activate w DB wszystkich signerow..."
 S=/nxms/lib/flow-$ts/snapshot.json
 incont /opt/nxms/bin/nxms-signer snapshot new --out "$S" --escrow-id-hex "$escrow" \
     --buyer-id buyer --seller-id seller --arbiter-id "$SIGNER" \
@@ -193,17 +162,16 @@ incont /opt/nxms/bin/nxms-signer snapshot new --out "$S" --escrow-id-hex "$escro
     --fee-cap-atomic "$FEE_CAP" >/dev/null || die "snapshot new"
 canon=$(incont /opt/nxms/bin/nxms-signer snapshot hash --snapshot "$S" | tr -d '\r\n ') \
     || die "snapshot hash"
-incont /opt/nxms/bin/nxms-signer snapshot sign --config /nxms/etc/signer-a.toml \
-    --snapshot "$S" --signer-id signer_a --out /nxms/lib/flow-$ts/sig-a.json >/dev/null || die "snapshot sign signer_a"
-incont /opt/nxms/bin/nxms-signer snapshot sign --config /nxms/etc/signer-b.toml \
-    --snapshot "$S" --signer-id signer_b --out /nxms/lib/flow-$ts/sig-b.json >/dev/null || die "snapshot sign signer_b"
-incont /opt/nxms/bin/nxms-signer snapshot sign --config /nxms/etc/peer1-sign.toml \
-    --snapshot "$S" --signer-id peer1 --out /nxms/lib/flow-$ts/sig-peer.json >/dev/null || die "snapshot sign peer1"
-for x in a b; do
+for x in a b c; do
+    incont /opt/nxms/bin/nxms-signer snapshot sign --config "/nxms/etc/signer-$x.toml" \
+        --snapshot "$S" --signer-id "signer_$x" --out "/nxms/lib/flow-$ts/sig-$x.json" >/dev/null \
+        || die "snapshot sign signer_$x"
+done
+for x in a b c; do
     incont /opt/nxms/bin/nxms-signer snapshot activate --config "/nxms/etc/signer-$x.toml" \
         --snapshot "$S" --signatures /nxms/lib/flow-$ts/sig-a.json \
         --signatures /nxms/lib/flow-$ts/sig-b.json \
-        --signatures /nxms/lib/flow-$ts/sig-peer.json >/dev/null || die "snapshot activate signer-$x"
+        --signatures /nxms/lib/flow-$ts/sig-c.json >/dev/null || die "snapshot activate signer-$x"
 done
 # Hash POLITYKI (wymagany przez action token) = sha256(canonical JSON snapshota).
 policy_hash=$($PY - "$fdir/snapshot.json" <<'PYEOF'
@@ -217,23 +185,32 @@ log "snapshot canonical(sha3)=$canon"
 log "snapshot policy(sha256)=$policy_hash"
 
 # --- Krok 2: portfel multisig — key images (Preparation for spending) -------
-# Wymiana jest BEZWARUNKOWA przed kazdym txsetem: monero 0.18.5 odrzuca
-# podpis ze starymi danymi ("This signature was made with stale data: export
-# fresh multisig data, which other participants must then use") — po kazdej
-# probie wydatku (transfer/sign_multisig) stan multisig uczestnikow sie rozjezdza.
+# Wymiana jest BEZWARUNKOWA miedzy WSZYSTKIMI trzema portfelami przed kazdym
+# txsetem: monero 0.18.5 odrzuca podpis ze starymi danymi ("This signature was
+# made with stale data: export fresh multisig data, which other participants
+# must then use") — po kazdej probie wydatku stan multisig uczestnikow sie
+# rozjezdza (dotyczy tez buyera, ktory podpisuje w rundzie 2).
 if rpc $wrpc_a '{"jsonrpc":"2.0","id":"0","method":"get_balance","params":{}}' \
     | grep -q '"multisig_import_needed": *true'; then
     log "get_balance zglasza multisig_import_needed"
 fi
-log "wymiana swiezych danych multisig miedzy wallet-a i wallet-b..."
+log "wymiana swiezych danych multisig miedzy wallet-a, wallet-b i wallet-c (buyer)..."
 info_a=$(rpc $wrpc_a '{"jsonrpc":"2.0","id":"0","method":"export_multisig_info","params":{}}' \
     | $PY -c 'import json,sys; print(json.load(sys.stdin)["result"]["info"])')
 info_b=$(rpc $wrpc_b '{"jsonrpc":"2.0","id":"0","method":"export_multisig_info","params":{}}' \
     | $PY -c 'import json,sys; print(json.load(sys.stdin)["result"]["info"])')
-rpc $wrpc_a "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"import_multisig_info\",\"params\":{\"info\":[\"$info_b\"]}}" >/dev/null
-rpc $wrpc_b "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"import_multisig_info\",\"params\":{\"info\":[\"$info_a\"]}}" >/dev/null
+info_c=$(rpc $wrpc_c '{"jsonrpc":"2.0","id":"0","method":"export_multisig_info","params":{}}' \
+    | $PY -c 'import json,sys; print(json.load(sys.stdin)["result"]["info"])')
+rpc $wrpc_a "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"import_multisig_info\",\"params\":{\"info\":[\"$info_b\",\"$info_c\"]}}" >/dev/null
+rpc $wrpc_b "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"import_multisig_info\",\"params\":{\"info\":[\"$info_a\",\"$info_c\"]}}" >/dev/null
+rpc $wrpc_c "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"import_multisig_info\",\"params\":{\"info\":[\"$info_a\",\"$info_b\"]}}" >/dev/null
 
-# --- Krok 3: niepodpisany txset z portfela (NIE tego, ktory bedzie podpis) ---
+# --- Krok 3: txset z portfela TRZECIEJ strony ------------------------------
+# Tworca txsetu nie moze go podpisac (monero: "Transaction already signed by
+# this private key"), a jego udzial jest pierwszym podpisem zbieranego txsetu —
+# wiec tworzy go strona, ktora NIE podpisuje w rundach 1-2 (dla domyslnego
+# SIGNER=signer_a i buyera w rundzie 2: wallet-b seller; dla SIGNER=signer_b:
+# wallet-a arbiter).
 case "$SIGNER" in
     signer_a) tx_wrpc=$wrpc_b tx_wallet=wallet-b ;;
     *)        tx_wrpc=$wrpc_a tx_wallet=wallet-a ;;
@@ -272,7 +249,7 @@ db.execute("""CREATE TABLE IF NOT EXISTS proposal_blobs (
     tx_data_hex TEXT NOT NULL, txset_hash_hex TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL)""")
 db.execute("INSERT OR REPLACE INTO workflow_instances VALUES (?,?,?,?,?,?)",
-           (os.environ["ESCROW"], "funded", os.environ["SNAP"], '["signer_a","signer_b","peer1"]', now, now))
+           (os.environ["ESCROW"], "funded", os.environ["SNAP"], '["signer_a","signer_b","signer_c","peer1"]', now, now))
 db.execute("INSERT OR REPLACE INTO proposal_blobs VALUES (?,?,?,?,?,?)",
            (os.environ["ESCROW"], "release", os.environ["TXSET"], os.environ["TXH"], now, now))
 db.commit()
@@ -321,8 +298,8 @@ sign_round() { # sign_round <signer-x> <rola> <round> <wallet_id> <sandbox_id> <
     echo "$jti" > "$fdir/jti-$1.txt"
 }
 
-# --- Krok 5-6: nxms-peer sign-req + approve signera -------------------------
-log "nxms-peer sign-req -> $SIGNER (mailbox http://127.0.0.1:$port)..."
+# --- Krok 5: runda 1 — nxms-peer sign-req + approve signera -----------------
+log "runda 1: nxms-peer sign-req -> $SIGNER (mailbox http://127.0.0.1:$port)..."
 dock exec -e RUST_LOG=warn "$name" /opt/nxms/bin/nxms-peer sign-req \
     --vault-dir /nxms/lib/peer-vault --passphrase-file /nxms/secrets/peer_vault_pass \
     --mailbox "http://127.0.0.1:$port" \
@@ -337,107 +314,67 @@ peer_pid=$!
 
 sign_round "$sx" "$role" "$round" "$wallet_id" "$sandbox_id" "$audience" sign_multisig
 wait "$peer_pid" || true
-jsonparse < "$fdir/sign-req.out" > "$fdir/sign-req.json" || die "nxms-peer sign-req bez wyniku JSON"
+jsonparse < "$fdir/sign-req.out" > "$fdir/sign-req.json" || die "nxms-peer sign-req (runda 1) bez wyniku JSON"
 outcome=$(cat "$fdir/sign-req.json")
 status=$($PY -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$outcome")
 signed=$($PY -c 'import json,sys; print(json.load(sys.stdin).get("signed_tx_data_hex") or "")' <<<"$outcome")
 reason=$($PY -c 'import json,sys; print(json.load(sys.stdin).get("reason") or "")' <<<"$outcome")
-log "sign-req: status=$status signed_tx_data_hex=${signed:-brak} ${reason:+reason=$reason}"
+log "runda 1 ($SIGNER/$role): status=$status ${reason:+reason=$reason}"
 
+# --- Krok 6: runda 2 — signer_c (buyer, sign_round=buyer_second) ------------
+# sign_multisig buyera doklada drugi podpis do zbieranego txsetu (pierwszy
+# niesie tworca, $tx_wallet) — po tej rundze zbierany txset ma DWA podpisy
+# z niezaleznych portfeli.
+log "runda 2: nxms-peer sign-req -> $SIGNER2 (buyer, sign_round=buyer_second)..."
+dock exec -e RUST_LOG=warn "$name" /opt/nxms/bin/nxms-peer sign-req \
+    --vault-dir /nxms/lib/peer-vault --passphrase-file /nxms/secrets/peer_vault_pass \
+    --mailbox "http://127.0.0.1:$port" \
+    --push-token-file /nxms/secrets/mailbox_push_token \
+    --pull-token-file /nxms/secrets/mailbox_pull_token_peer1 \
+    --ack-token-file /nxms/secrets/mailbox_ack_token_peer1 \
+    --to "$SIGNER2" --escrow-id "$escrow" --action release \
+    --txset-file /nxms/lib/flow-$ts/txset.hex --snapshot-hash "$canon" \
+    --peers-file /nxms/etc/peers-peer1.json --wait-ms 1000 --timeout-secs 300 \
+    > "$fdir/sign-req-2.out" 2> "$fdir/sign-req-2.err" &
+peer2_pid=$!
+r2_wallet=$(cfgget c wallet_id); r2_sandbox=$(cfgget c sandbox_id); r2_audience=$(cfgget c audience)
+[ -n "$r2_wallet" ] && [ -n "$r2_sandbox" ] && [ -n "$r2_audience" ] \
+    || die "nie odczytano wallet_id/sandbox_id/audience z signer-c.toml"
+sign_round c buyer buyer_second "$r2_wallet" "$r2_sandbox" "$r2_audience" sign_multisig
+wait "$peer2_pid" || true
+jsonparse < "$fdir/sign-req-2.out" > "$fdir/sign-req-2.json" || die "nxms-peer sign-req (runda 2) bez wyniku JSON"
+round2_json=$(cat "$fdir/sign-req-2.json")
+r2_status=$($PY -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$round2_json")
+zbierany=$($PY -c 'import json,sys; print(json.load(sys.stdin).get("signed_tx_data_hex") or "")' <<<"$round2_json")
+r2_reason=$($PY -c 'import json,sys; print(json.load(sys.stdin).get("reason") or "")' <<<"$round2_json")
+log "runda 2 ($SIGNER2/buyer): status=$r2_status ${r2_reason:+reason=$r2_reason}"
+
+# --- Krok 7: --submit — submit_multisig na zbieranym txsecie ----------------
+# Po dwoch podpisach ($tx_wallet + buyer) zbierany txset idzie do sieci wprost
+# przez wallet-rpc buyera (submit_multisig).
 submit_json="null"
-round2_json="null"
-if [ "$submit" = 1 ] && [ -n "$signed" ]; then
-    # --- Krok 8: druga runda (seller_second) + token submit_multisig --------
-    # Uwaga: txset stworzyl $tx_wallet, wiec podpis drugiego portfela domyka
-    # transakcje juz w rundzie 1 (2 z 3). Runda 2 dla drugiego signera jest
-    # wiec runda odmowy z powodem — sluzy jako dowod quorum (proof jti/req_id)
-    # dla tokenu submit_multisig.
-    log "--submit: runda 2 ($other_id) + submit_multisig..."
-    dock exec -e RUST_LOG=warn "$name" /opt/nxms/bin/nxms-peer sign-req \
-        --vault-dir /nxms/lib/peer-vault --passphrase-file /nxms/secrets/peer_vault_pass \
-        --mailbox "http://127.0.0.1:$port" \
-        --push-token-file /nxms/secrets/mailbox_push_token \
-        --pull-token-file /nxms/secrets/mailbox_pull_token_peer1 \
-        --ack-token-file /nxms/secrets/mailbox_ack_token_peer1 \
-        --to "$other_id" --escrow-id "$escrow" --action release \
-        --txset-file /nxms/lib/flow-$ts/txset.hex --snapshot-hash "$canon" \
-        --peers-file /nxms/etc/peers-peer1.json --wait-ms 1000 --timeout-secs 300 \
-        > "$fdir/sign-req-2.out" 2> "$fdir/sign-req-2.err" &
-    peer2_pid=$!
-    pend2=$(wait_pending "$other") || die "brak pending u $other_id (runda 2)"
-    if [ "$other_id" = signer_a ]; then r2_role=arbiter; else r2_role=seller; fi
-    r2_wallet=$(cfgget "$other" wallet_id); r2_sandbox=$(cfgget "$other" sandbox_id)
-    r2_audience=$(cfgget "$other" audience)
-    out2=$(issue_token "$r2_role" sign_multisig "$txset_hash" \
-        "$r2_wallet" "$r2_sandbox" "$r2_audience") || die "action-token issue (runda 2)"
-    jti2=${out2#*$'\t'}
-    echo "$jti2" > "$fdir/jti-$other_id.txt"
-    incont /opt/nxms/bin/nxms-signer pending reject --config "/nxms/etc/signer-$other.toml" \
-        --id "$pend2" --reason "quorum 2/3 osiagniety w rundzie 1 (txset stworzyl $tx_wallet — monero nie pozwala podpisac wlasnego txsetu); runda dowodowa dla tokenu submit_multisig" >/dev/null \
-        || die "pending reject (runda 2)"
-    wait "$peer2_pid" || true
-    if jsonparse < "$fdir/sign-req-2.out" > "$fdir/sign-req-2.json"; then
-        round2_json=$(cat "$fdir/sign-req-2.json")
-    fi
-
-    # Dowody quorum: req_id = sha256("escrow|sign_multisig|<round>|<txset_hash_submit>)
-    txset_hash_submit=$($PY -c "import hashlib; print(hashlib.sha256(bytes.fromhex('$signed')).hexdigest())")
-    reqs=$($PY - "$escrow" "$txset_hash_submit" <<'PYEOF'
-import hashlib, sys
-for rnd in ("arbiter_first", "seller_second"):
-    material = f"{sys.argv[1]}|sign_multisig|{rnd}|{sys.argv[2]}"
-    print(hashlib.sha256(material.encode()).hexdigest())
-PYEOF
-)
-    req_arb=$(echo "$reqs" | sed -n 1p); req_sell=$(echo "$reqs" | sed -n 2p)
-    jti1=$(cat "$fdir/jti-$sx.txt")
-    incont /opt/nxms/bin/nxms-escrow-orchestrator quorum-proof set \
-        --db-path /nxms/lib/orchestrator-flow.db --escrow-id-hex "$escrow" \
-        --role arbiter --sign-round arbiter_first --txset-hash-hex "$txset_hash_submit" \
-        --jti "$jti1" --req-id "$req_arb" >/dev/null || die "quorum-proof set (arbiter)"
-    incont /opt/nxms/bin/nxms-escrow-orchestrator quorum-proof set \
-        --db-path /nxms/lib/orchestrator-flow.db --escrow-id-hex "$escrow" \
-        --role seller --sign-round seller_second --txset-hash-hex "$txset_hash_submit" \
-        --jti "$jti2" --req-id "$req_sell" >/dev/null || die "quorum-proof set (seller)"
-    # Proposal dla tokenu submit wiaze sie z hashem FINALNYCH danych transakcji.
-    seed_orch_db "$txset_hash_submit" "$signed"
-    out3=$(issue_token "$role" submit_multisig "$txset_hash_submit" "$wallet_id" "$sandbox_id" "$audience") \
-        || die "action-token issue (submit_multisig)"
-    subtoken=${out3%%$'\t'*}
-    sub_jti=${out3#*$'\t'}
-    log "submit_multisig (jti=$sub_jti)..."
-    if incont /opt/nxms/bin/nxms-signer pending submit --config "/nxms/etc/signer-$sx.toml" \
-        --escrow-id-hex "$escrow" --tx-data-hex "$signed" --action release \
-        --action-token "$subtoken" > "$fdir/submit.out" 2> "$fdir/submit.err"; then
-        submit_json=$(jsonparse < "$fdir/submit.out" | $PY -c \
-            'import json,sys; print(json.dumps({"mode":"signer_pending_submit","tx_hash_list":json.load(sys.stdin),"proof_seller_jti":sys.argv[1]}))' "$jti2")
-    else
-        # SKROT LAB: signer submit flow wymaga describe_transfer na podpisanym
-        # tx_data — jesli realne monero tego nie przyjmuje, submitujemy wprost
-        # przez wallet-rpc (ten sam portfel co signer rundy 1).
-        log "pending submit nie przeszedz ($(head -c 200 "$fdir/submit.err")) — SKROT LAB: submit_multisig przez wallet-rpc :$([ "$sx" = a ] && echo "$wrpc_a" || echo "$wrpc_b")"
-        sw=$([ "$sx" = a ] && echo "$wrpc_a" || echo "$wrpc_b")
-        sub=$(rpc "$sw" "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"submit_multisig\",\"params\":{\"tx_data_hex\":\"$signed\"}}")
-        submit_json=$(SUB="$sub" MODE="wallet_rpc_submit_multisig" JTI="$jti2" \
-            NOTE="$(head -c 300 "$fdir/submit.err" | tr -d '\n')" $PY - <<'PYEOF'
+if [ "$submit" = 1 ] && [ -n "$zbierany" ]; then
+    log "submit_multisig na zbieranym txsecie (podpisy $tx_wallet + buyer) przez wallet-rpc :$wrpc_c..."
+    sub=$(rpc $wrpc_c "{\"jsonrpc\":\"2.0\",\"id\":\"0\",\"method\":\"submit_multisig\",\"params\":{\"tx_data_hex\":\"$zbierany\"}}")
+    submit_json=$(SUB="$sub" MODE="wallet_rpc_submit_multisig" $PY - <<'PYEOF'
 import json, os
 r = json.loads(os.environ["SUB"])
 print(json.dumps({"mode": os.environ["MODE"],
                   "tx_hash_list": (r.get("result") or {}).get("tx_hash_list"),
-                  "error": r.get("error"), "proof_seller_jti": os.environ["JTI"],
-                  "note": "skrot lab — " + os.environ["NOTE"]}))
+                  "error": r.get("error")}))
 PYEOF
 )
-    fi
 fi
 
-# --- Krok 7: zapis wyniku ---------------------------------------------------
+# --- Krok 8: zapis wyniku ---------------------------------------------------
 $PY - "$dir/lib/flow-$ts.json" <<PYEOF
 import json, sys
 doc = {
     "task": "$task", "ts": "$ts", "escrow_id_hex": "$escrow", "action": "release",
     "amount_xmr": "$amt", "release_address": "$RELEASE_ADDR",
-    "signer_round1": "$SIGNER", "txset_wallet": "$tx_wallet",
+    "signer_round1": "$SIGNER", "signer_round2": "$SIGNER2",
+    "txset_wallet": "$tx_wallet", "signed_by": "$tx_wallet+buyer",
+    "quorum": "2 z 3 niezaleznych stron",
     "txset_hash_hex": "$txset_hash",
     "snapshot_hash_hex": "$canon", "snapshot_policy_hash_hex": "$policy_hash",
     "sign_req": json.loads('''$outcome'''),
@@ -454,10 +391,13 @@ echo "escrow:            $escrow"
 echo "txset:             $tx_wallet :$tx_wrpc -> $RELEASE_ADDR ($amt XMR)"
 echo "txset_hash:        $txset_hash"
 echo "snapshot:          $canon (policy $policy_hash)"
-echo "sign-req do:       $SIGNER — status=$status"
-echo "signed_tx_data:    ${signed:-brak}"
-[ -n "$reason" ] && echo "reason:            $reason"
+echo "runda 1:           $SIGNER ($role) — status=$status"
+echo "runda 2:           $SIGNER2 (buyer_second) — status=$r2_status"
+echo "podpisy (quorum):  $tx_wallet + buyer — 2 z 3 niezaleznych portfeli"
+echo "zbierany txset:    ${zbierany:0:48}... (${#zbierany} hex)"
+[ -n "$reason" ] && echo "reason r1:         $reason"
+[ -n "$r2_reason" ] && echo "reason r2:         $r2_reason"
 [ "$submit_json" != null ] && echo "submit:            $submit_json"
 echo "wynik (JSON):      $dir/lib/flow-$ts.json"
-[ "$status" = approved ] || exit 1
+[ "$status" = approved ] && [ "$r2_status" = approved ] || exit 1
 exit 0

@@ -5,9 +5,12 @@
 # Kazde zadanie task-NN = osobny kontener Alpine (host network) z:
 #   - wlasnym Tor + ukryta usluga (.onion; relacje Tor-only),
 #   - rola mailbox (nxms-mailbox) na 127.0.0.1:41NN,
-#   - dwoma signerami (nxms-signer) przez socks5h wlasnego Tor do .onion mailboxa,
-#   - DWOMA realnymi wallet-rpc (monero 0.18.5) na 127.0.0.1:43NN/44NN z
-#     wlasnym portfelem multisig 2/3 (escrow_wallet_a/b; ceremonia wg monerodocs),
+#   - TRIADA signerow 2/3 (nxms-signer) przez socks5h wlasnego Tor do .onion
+#     mailboxa: signer-a (arbiter), signer-b (seller), signer-c (buyer) —
+#     dwaj z trzech niezaleznych stron zatwierdzaja wydatek escrow,
+#   - TRZEMA realnymi wallet-rpc (monero 0.18.5) na 127.0.0.1:43NN/44NN/45NN z
+#     portfelami multisig 2/3 (escrow_wallet_a, escrow_wallet_b, buyer_wallet;
+#     ceremonia wg monerodocs),
 #   - peerem przeplywu escrow (peer1): host-vault + tozsamosc w bundlu zaufania
 #     i w allowlistach peers-*.json signerow (nadawca tx_sign_req dla
 #     tools/nxms-flow.sh; skrzynka odbiorcza peer1 w mailboxu).
@@ -85,10 +88,12 @@ if state in ("done", "failed", "stopped") and not doc.get("finished_at"):
 roles = [
     {"name": "tor", "state": "active" if tor == "1" else "down", "detail": onion},
     {"name": "mailbox", "state": "active" if mbox == "1" else "down", "detail": "http://" + onion if onion else ""},
-    {"name": "signer-a", "state": "active" if sign >= 1 else "down", "detail": ""},
-    {"name": "signer-b", "state": "active" if sign >= 2 else "down", "detail": ""},
+    {"name": "signer-a", "state": "active" if sign >= 1 else "down", "detail": "arbiter"},
+    {"name": "signer-b", "state": "active" if sign >= 2 else "down", "detail": "seller"},
+    {"name": "signer-c", "state": "active" if sign >= 3 else "down", "detail": "buyer"},
     {"name": "wallet-rpc-a", "state": "active" if wrpc >= 1 else "down", "detail": "monero 0.18.5"},
     {"name": "wallet-rpc-b", "state": "active" if wrpc >= 2 else "down", "detail": "monero 0.18.5"},
+    {"name": "wallet-rpc-c", "state": "active" if wrpc >= 3 else "down", "detail": "monero 0.18.5"},
 ]
 active = sum(1 for r in roles if r["state"] == "active")
 doc.update({
@@ -121,12 +126,14 @@ ensure_peer_in_peers_files() { # ensure_peer_in_peers_files <dir>
     # nxms-transport). Dla nowych stosow materialize-local wypisze peera sam
     # (bundle zawiera jego tozsamosc); to jest backfill dla stosow starszych.
     local dir=$1
-    PEER_IDENTITY="$dir/lib/id-peer.json" /usr/bin/python3 - "$dir/etc/peers-a.json" "$dir/etc/peers-b.json" <<'PYEOF'
+    PEER_IDENTITY="$dir/lib/id-peer.json" /usr/bin/python3 - "$dir/etc/peers-a.json" "$dir/etc/peers-b.json" "$dir/etc/peers-c.json" <<'PYEOF'
 import json, os, sys
 ident = json.load(open(os.environ["PEER_IDENTITY"]))
 peer = {"id": ident["host_id"], "host": ident["host"], "port": ident["port"],
         "kem_pk_b64": ident["kem_pk_b64"], "sig_pk_b64": ident["sig_pk_b64"]}
 for path in sys.argv[1:]:
+    if not os.path.exists(path):
+        continue
     doc = json.load(open(path))
     peers = doc.setdefault("peers", [])
     if any(p.get("id") == peer["id"] for p in peers):
@@ -140,20 +147,20 @@ PYEOF
 
 provision() { # provision <id> <port> <socks_port>
     local id=$1 port=$2 socks=$3 dir=$STATE/$1
-    local wrpc_a=$((port + 200)) wrpc_b=$((port + 300))
+    local wrpc_a=$((port + 200)) wrpc_b=$((port + 300)) wrpc_c=$((port + 400))
     install -d -m 0755 "$dir/etc" "$dir/lib" "$dir/logs" "$dir/secrets" "$dir/tor" "$dir/lib/wallets"
-    install -d -m 0700 "$dir/lib/host-vault-a" "$dir/lib/host-vault-b"
+    install -d -m 0700 "$dir/lib/host-vault-a" "$dir/lib/host-vault-b" "$dir/lib/host-vault-c"
     local s=$dir/secrets
     if [ ! -f "$s/mailbox_admin_token" ]; then
         gen_token > "$s/mailbox_admin_token"; gen_token > "$s/mailbox_push_token"
-        for r in orchestrator signer-a signer-b peer1; do gen_token > "$s/mailbox_pull_token_$r"; gen_token > "$s/mailbox_ack_token_$r"; done
-        for r in a b; do gen_token > "$s/worker_service_token_$r"; gen_token > "$s/host_vault_passphrase_$r"; done
+        for r in orchestrator signer-a signer-b signer-c peer1; do gen_token > "$s/mailbox_pull_token_$r"; gen_token > "$s/mailbox_ack_token_$r"; done
+        for r in a b c; do gen_token > "$s/worker_service_token_$r"; gen_token > "$s/host_vault_passphrase_$r"; done
         gen_token > "$s/peer_vault_pass"
         openssl genpkey -algorithm ed25519 -out "$s/action_token_priv.pem" 2>/dev/null
         openssl pkey -in "$s/action_token_priv.pem" -pubout -out "$s/action_token_pub.pem" 2>/dev/null
         gen_token > "$s/token_issuer_pass"
         gen_token > "$s/wallet_pass_a"; gen_token > "$s/wallet_pass_b"; gen_token > "$s/wallet_pass_buyer"
-        for r in a b; do
+        for r in a b c; do
             echo "stack-$id-$r" > "$s/wrpc_user_$r"; gen_token > "$s/wrpc_pass_$r"
             echo "lab-only" > "$s/wallet_rpc_wallet_password_$r"
             echo "lab-only" > "$s/wallet_rpc_password_$r"
@@ -161,7 +168,10 @@ provision() { # provision <id> <port> <socks_port>
     fi
     # Backfill sekretow dodanych po pierwszym provisionie (stosy juz istniejace).
     local sf
-    for sf in mailbox_pull_token_peer1 mailbox_ack_token_peer1 peer_vault_pass; do
+    for sf in mailbox_pull_token_peer1 mailbox_ack_token_peer1 peer_vault_pass \
+        mailbox_pull_token_signer-c mailbox_ack_token_signer-c \
+        worker_service_token_c host_vault_passphrase_c wrpc_user_c wrpc_pass_c \
+        wallet_rpc_wallet_password_c wallet_rpc_password_c; do
         [ -f "$s/$sf" ] || gen_token > "$s/$sf"
     done
     chmod 700 "$s"; chmod 600 "$s"/* 2>/dev/null || true
@@ -220,11 +230,13 @@ admin_token = "vault:/nxms/secrets/mailbox_admin_token"
 orchestrator = "vault:/nxms/secrets/mailbox_pull_token_orchestrator"
 signer_a = "vault:/nxms/secrets/mailbox_pull_token_signer-a"
 signer_b = "vault:/nxms/secrets/mailbox_pull_token_signer-b"
+signer_c = "vault:/nxms/secrets/mailbox_pull_token_signer-c"
 peer1 = "vault:/nxms/secrets/mailbox_pull_token_peer1"
 [ack_tokens]
 orchestrator = "vault:/nxms/secrets/mailbox_ack_token_orchestrator"
 signer_a = "vault:/nxms/secrets/mailbox_ack_token_signer-a"
 signer_b = "vault:/nxms/secrets/mailbox_ack_token_signer-b"
+signer_c = "vault:/nxms/secrets/mailbox_ack_token_signer-c"
 peer1 = "vault:/nxms/secrets/mailbox_ack_token_peer1"
 EOF
     local x
@@ -237,11 +249,18 @@ EOF
     else
         trust_line='# tryb lab: runtime_trust_bundle_path pominiete (brak CLI dla admission artifact)'
     fi
-    for x in a b; do
+    for x in a b c; do
+        # Triada signerow 2/3: arbiter (a), seller (b), buyer (c). Portfel buyera
+        # z ceremonii multisig nazywa sie buyer_wallet (haslo: wallet_pass_buyer).
+        case "$x" in
+            a) s_role=arbiter; s_wallet=escrow_wallet_a; s_wallet_pass=wallet_pass_a; s_wrpc=$wrpc_a ;;
+            b) s_role=seller;   s_wallet=escrow_wallet_b; s_wallet_pass=wallet_pass_b; s_wrpc=$wrpc_b ;;
+            c) s_role=buyer;    s_wallet=buyer_wallet;    s_wallet_pass=wallet_pass_buyer; s_wrpc=$wrpc_c ;;
+        esac
         cat > "$dir/etc/signer-$x.toml" <<EOF
 # NXMS stack $id: signer-$x (realna granica Monero).
 local_id = "signer_$x"
-signer_role = "$([ "$x" = a ] && echo arbiter || echo seller)"
+signer_role = "$s_role"
 sandbox_id = "sandbox-$id-$x"
 wallet_id = "wallet-$id-$x"
 nettype = "stagenet"
@@ -266,9 +285,9 @@ poll_interval_ms = 800
 default_ttl_secs = 86400
 max_txset_hex_len = 16777216
 [wallet_rpc]
-endpoint = "http://127.0.0.1:$([ "$x" = a ] && echo "$wrpc_a" || echo "$wrpc_b")"
-wallet_name = "escrow_wallet_$x"
-wallet_password = "vault:/nxms/secrets/wallet_pass_$x"
+endpoint = "http://127.0.0.1:$s_wrpc"
+wallet_name = "$s_wallet"
+wallet_password = "vault:/nxms/secrets/$s_wallet_pass"
 username = "vault:/nxms/secrets/wrpc_user_$x"
 password = "vault:/nxms/secrets/wrpc_pass_$x"
 [wallet_provision]
@@ -303,6 +322,14 @@ EOF
         "$hb" export-host-identity --local-id signer_b --role ag-02 --host "$onion" --port 80 \
             --host-vault-dir "$dir/lib/host-vault-b" --host-vault-passphrase-file "$s/host_vault_passphrase_b" \
             --out "$dir/lib/id-b.json" >/dev/null || die "export identity b ($id)"
+        # signer-c (buyer) to trzecia tozsamosc bundlu. Rola ag-03 jest zgodna
+        # z walidacja (role peerow dowolne 1..=128 znakow); quorum sygnatariuszy
+        # bundlu/admission zostaje ag-01+ag-02 (REQUIRED_GUARD_ROLES).
+        "$hb" generate-host-vault --local-id signer_c --host-vault-dir "$dir/lib/host-vault-c" \
+            --host-vault-passphrase-file "$s/host_vault_passphrase_c" >/dev/null || die "host-vault signer_c ($id)"
+        "$hb" export-host-identity --local-id signer_c --role ag-03 --host "$onion" --port 80 \
+            --host-vault-dir "$dir/lib/host-vault-c" --host-vault-passphrase-file "$s/host_vault_passphrase_c" \
+            --out "$dir/lib/id-c.json" >/dev/null || die "export identity c ($id)"
         provision_peer_identity "$id" "$dir" "$onion"
         "$hb" generate-action-token-issuer-vault --issuer nxms-auth --algorithm EDDSA \
             --action-token-issuer-vault-dir "$dir/lib/token-issuer" \
@@ -312,6 +339,7 @@ EOF
             --out "$dir/lib/issuer.json" >/dev/null || die "token issuer export ($id)"
         "$hb" init-bundle --trust-epoch "stack-$id-$(date -u +%Y%m%d)" \
             --host-identity "$dir/lib/id-a.json" --host-identity "$dir/lib/id-b.json" \
+            --host-identity "$dir/lib/id-c.json" \
             --host-identity "$dir/lib/id-peer.json" \
             --action-token-issuer-bundle "$dir/lib/issuer.json" \
             --out "$dir/lib/bundle.json" >/dev/null || die "init-bundle ($id)"
@@ -329,6 +357,9 @@ EOF
         "$hb" materialize-local --bundle "$dir/lib/bundle.s2.json" --local-id signer_b \
             --host-vault-dir "$dir/lib/host-vault-b" --host-vault-passphrase-file "$s/host_vault_passphrase_b" \
             --peers-out "$dir/etc/peers-b.json" --action-token-public-key-pem-out "$s/action_token_pub.pem" >/dev/null || die "materialize b ($id)"
+        "$hb" materialize-local --bundle "$dir/lib/bundle.s2.json" --local-id signer_c \
+            --host-vault-dir "$dir/lib/host-vault-c" --host-vault-passphrase-file "$s/host_vault_passphrase_c" \
+            --peers-out "$dir/etc/peers-c.json" --action-token-public-key-pem-out "$s/action_token_pub.pem" >/dev/null || die "materialize c ($id)"
         ensure_peer_in_peers_files "$dir"
 
         # --- Ceremonia multisig 2/3 (monero 0.18.5 w kontenerze) ---
@@ -399,7 +430,7 @@ EOF
 
     cat > "$dir/run.sh" <<'EOF'
 #!/bin/sh
-# Nadzorca instancji: Tor -> wallet-rpc x2 -> mailbox -> signerzy.
+# Nadzorca instancji: Tor -> wallet-rpc x3 -> mailbox -> signerzy (triada 2/3).
 set -u
 cd /nxms
 echo tor > /nxms/logs/stage
@@ -423,16 +454,28 @@ monero-wallet-rpc --stagenet --non-interactive --daemon-address 127.0.0.1:38081 
     --trusted-daemon --wallet-dir /nxms/lib/wallets \
     --rpc-bind-ip 127.0.0.1 --rpc-bind-port WRPC_B --disable-rpc-login \
     --log-file /nxms/logs/wallet-rpc-b.log --disable-rpc-ban > /nxms/logs/wallet-rpc-b.out 2>&1 &
+# wallet-rpc-c (buyer_wallet) tylko przy pelnej triadzie — stare stosy bez
+# host-vault-c dzialaja dalej w wariancie 2-signerowym.
+if [ -f /nxms/lib/host-vault-c/vault.bin ]; then
+    monero-wallet-rpc --stagenet --non-interactive --daemon-address 127.0.0.1:38081 \
+        --trusted-daemon --wallet-dir /nxms/lib/wallets \
+        --rpc-bind-ip 127.0.0.1 --rpc-bind-port WRPC_C --disable-rpc-login \
+        --log-file /nxms/logs/wallet-rpc-c.log --disable-rpc-ban > /nxms/logs/wallet-rpc-c.out 2>&1 &
+fi
 echo mailbox > /nxms/logs/stage
 /opt/nxms/bin/nxms-mailbox serve --config /nxms/etc/mailbox.toml >> /nxms/logs/mailbox.log 2>&1 &
 echo "czekam na wallet-rpc..." >> /nxms/logs/mailbox.log
 for i in $(seq 1 60); do
-    nc -z 127.0.0.1 WRPC_A 2>/dev/null && nc -z 127.0.0.1 WRPC_B 2>/dev/null && break
+    nc -z 127.0.0.1 WRPC_A 2>/dev/null && nc -z 127.0.0.1 WRPC_B 2>/dev/null \
+        && { [ ! -f /nxms/lib/host-vault-c/vault.bin ] || nc -z 127.0.0.1 WRPC_C 2>/dev/null; } && break
     sleep 2
 done
 echo signers > /nxms/logs/stage
 /opt/nxms/bin/nxms-signer run --config /nxms/etc/signer-a.toml >> /nxms/logs/signer-a.log 2>&1 &
 /opt/nxms/bin/nxms-signer run --config /nxms/etc/signer-b.toml >> /nxms/logs/signer-b.log 2>&1 &
+if [ -f /nxms/lib/host-vault-c/vault.bin ]; then
+    /opt/nxms/bin/nxms-signer run --config /nxms/etc/signer-c.toml >> /nxms/logs/signer-c.log 2>&1 &
+fi
 sleep 2
 echo running > /nxms/logs/stage
 wait -n
@@ -441,7 +484,7 @@ echo crashed > /nxms/logs/stage
 sleep 3600
 EOF
     chmod 0755 "$dir/run.sh"
-    sed -i "s/MONERO_PKG/$MONERO_PKG/; s/WRPC_A/$wrpc_a/; s/WRPC_B/$wrpc_b/" "$dir/run.sh"
+    sed -i "s/MONERO_PKG/$MONERO_PKG/; s/WRPC_A/$wrpc_a/; s/WRPC_B/$wrpc_b/; s/WRPC_C/$wrpc_c/" "$dir/run.sh"
     cp "$script_dir/../tools/wallet-rpc-stub.py" "$dir/etc/wallet-rpc-stub.py" 2>/dev/null || true
 }
 
@@ -496,7 +539,7 @@ case ${1:-} in
                 onion=$(cat "$dir/logs/onion" 2>/dev/null || cat "$dir/lib/onion.txt" 2>/dev/null || true)
                 write_task_record "$id" "running" "$stage" "$name" "${tor:-0}" "${mbox:-0}" "${sign:-0}" "${wrpc:-0}" "${onion:-}"
                 escrow=$(cat "$dir/lib/multisig-address.txt" 2>/dev/null | cut -c1-12 || echo '-')
-                printf '%-10s running · krok: %-11s role: %s/6  escrow: %s…  %s\n' \
+                printf '%-10s running · krok: %-11s role: %s/8  escrow: %s…  %s\n' \
                     "$id" "$stage" "$((tor + mbox + sign + wrpc))" "${escrow:--}" "${onion:-?}"
             else
                 write_task_record "$id" "stopped" "" "$name" 0 0 0 0 "$(cat "$dir/lib/onion.txt" 2>/dev/null || true)"
