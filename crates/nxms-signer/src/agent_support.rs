@@ -73,15 +73,29 @@ pub(crate) async fn provision_wallet_multisig_enable(cfg: &SignerConfig) -> Resu
         wallet_file = %wallet_file.display(),
         "wallet provisioning: enabling multisig-experimental via server-side CLI"
     );
-    run_wallet_cli_command(
+    // Best-effort: komenda 'set enable-multisig-experimental 1' nie dziala w trybie
+    // wsadowym na monero-wallet-cli 0.18.x (--command nie rozdziela argumentow, a
+    // flaga jest sesyjna). Stan multisig portfela i tak jest twardo egzekwowany
+    // przez enforce_wallet_multisig_ready w nastepnym kroku startu agenta —
+    // provisioning jest tylko wstepna wygoda, nie warunkiem bezpieczenstwa.
+    if let Err(error) = run_wallet_cli_command(
         cfg,
         provision,
         &wallet_file,
         "set enable-multisig-experimental 1",
         Some(&cfg.wallet_rpc.wallet_password),
     )
-    .await?;
-    run_wallet_cli_command(cfg, provision, &wallet_file, "save", None).await?;
+    .await
+    {
+        warn!(
+            wallet_file = %wallet_file.display(),
+            %error,
+            "wallet provisioning: enable-multisig-experimental pominiety (tryb wsadowy); \
+             gotowosc multisig egzekwuje enforce_wallet_multisig_ready"
+        );
+        return Ok(());
+    }
+    let _ = run_wallet_cli_command(cfg, provision, &wallet_file, "save", None).await;
     info!(
         wallet_file = %wallet_file.display(),
         "wallet provisioning completed"

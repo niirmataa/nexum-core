@@ -1,0 +1,6 @@
+[Unit]
+Description=NXMS watchdog monerod-a (restart przy braku odpowiedzi RPC)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/nxms/bin/nxms-monerod-watchdog

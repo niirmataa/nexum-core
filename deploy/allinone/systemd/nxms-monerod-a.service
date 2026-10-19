@@ -1,0 +1,30 @@
+[Unit]
+Description=NXMS monerod stagenet (monero-a, Tor-only, pruned) — shared daemon stage D
+After=network.target tor.service
+
+[Service]
+Type=simple
+User=monero-a
+Group=monero-a
+ExecStart=/usr/bin/monerod --stagenet --non-interactive --data-dir /var/lib/nxms-monero-a/stagenet \
+    --prune-blockchain --sync-pruned-blocks --max-concurrency 1 --prep-blocks-threads 1 \
+    --p2p-bind-ip 127.0.0.1 --p2p-bind-port 38084 --no-igd --hide-my-port --in-peers 0 --out-peers 4 \
+    --rpc-bind-ip 127.0.0.1 --rpc-bind-port 38081 --no-zmq \
+    --check-updates disabled --disable-dns-checkpoints \
+    --proxy 127.0.0.1:9050 \
+    --limit-rate-down 20480 --limit-rate-up 128 \
+    --log-level 0 --log-file /var/log/nxms-monero-a/monerod.log \
+    --max-log-file-size 10485760 --max-log-files 3
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/nxms-monero-a/service.log
+StandardError=append:/var/log/nxms-monero-a/service.log
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nxms-monero-a /var/log/nxms-monero-a
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target

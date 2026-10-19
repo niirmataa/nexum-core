@@ -165,9 +165,8 @@ mailbox_admin_token = "vault:/run/secrets/nxms-signer-$X/mailbox_admin_token"
 worker_service_token = "vault:/run/secrets/nxms-signer-$X/worker_service_token"
 tor_socks5h = "socks5h://127.0.0.1:9050"
 allow_remote_wallet_rpc = false
-# ETAP C (all-in-one): profil bez granicy Monero. production_hardening=true
-# wymaga dzialajacego wallet_provision (monero-wallet-cli) — wraca w roadmapie D.
-production_hardening = false
+# ETAP D: realna granica Monero (monerod + wallet-rpc na loopback).
+production_hardening = true
 
 snapshot_quorum = 3
 pull_max = 20
@@ -186,10 +185,10 @@ username = "wallet-rpc-user-$X"
 password = "vault:/run/secrets/nxms-signer-$X/wallet_rpc_password"
 
 [wallet_provision]
-# Wlaczone przy production_hardening (roadmapa D, granica Monero).
-enabled = false # odroczone do roadmapy D
-wallet_cli_path = "/opt/monero/current/monero-wallet-cli"
-wallet_dir = "/var/lib/nxms-signer-$X/wallets"
+# Realna granica Monero (sekcja D) — monero-wallet-cli z pakietu Debiana.
+enabled = true # realna granica Monero (sekcja D)
+wallet_cli_path = "/usr/bin/monero-wallet-cli"
+wallet_dir = "/var/lib/nxms-monero-$X/wallets"
 daemon_address = "127.0.0.1:38081"
 trusted_daemon = true
 extra_args = []
@@ -206,13 +205,15 @@ max_ttl_secs = 120
 EOF
 done
 
-# Migracja: profil etapu C (bez granicy Monero) — production_hardening=false
-# i wallet_provision.enabled=false. Powrot do true w roadmapie D.
+# Migracja do profilu D: realna granica Monero — production_hardening=true,
+# wallet_provision wlaczone, realny monero-wallet-cli i katalog portfeli pary.
 for X in a b; do
     cfg="/etc/nxms/signer-$X/signer.toml"
     [ -f "$cfg" ] || continue
-    sed -i 's/^production_hardening = true$/production_hardening = false/' "$cfg"
-    sed -i 's/^enabled = true # odroczone do roadmapy D$/enabled = false # odroczone do roadmapy D/' "$cfg"
+    sed -i 's/^production_hardening = false$/production_hardening = true/' "$cfg"
+    sed -i 's/^enabled = false # odroczone do roadmapy D$/enabled = true # realna granica Monero (sekcja D)/' "$cfg"
+    sed -i 's|^wallet_cli_path = .*|wallet_cli_path = "/usr/bin/monero-wallet-cli"|' "$cfg"
+    sed -i "s|^wallet_dir = .*|wallet_dir = \"/var/lib/nxms-monero-$X/wallets\"|" "$cfg"
     sed -i 's/\.onion\.onion/.onion/g' "$cfg"
 done
 

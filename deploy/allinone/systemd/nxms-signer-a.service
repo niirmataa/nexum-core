@@ -1,8 +1,8 @@
 [Unit]
 Description=NXMS signer-a (all-in-one capability node)
 Documentation=file:///etc/nxms/signer-a/signer.toml
-After=network.target nxms-mailbox.service nxms-wallet-stub-a.service
-Wants=nxms-mailbox.service nxms-wallet-stub-a.service
+After=network.target nxms-mailbox.service nxms-wallet-rpc-a.service
+Wants=nxms-mailbox.service nxms-wallet-rpc-a.service
 
 [Service]
 Type=simple

@@ -13,9 +13,9 @@ die() { printf 'nxms-allinone-run: %s\n' "$*" >&2; exit 1; }
 self=$(readlink -f -- "$0")
 workspace=$(cd -- "$(dirname -- "$self")/.." && pwd -P)
 
-if ! command -v tor >/dev/null 2>&1; then
-    printf '== installing tor ==\n'
-    DEBIAN_FRONTEND=noninteractive apt-get install -y tor
+if ! command -v tor >/dev/null 2>&1 || ! command -v monerod >/dev/null 2>&1; then
+    printf '== installing tor + monero ==\n'
+    DEBIAN_FRONTEND=noninteractive apt-get install -y tor monero
 fi
 
 printf '\n== C1/C2: setup ==\n'
@@ -27,7 +27,17 @@ bash "$workspace/tools/nxms-allinone-tor.sh"
 printf '\n== C3: ceremony ==\n'
 bash "$workspace/tools/nxms-allinone-ceremony.sh"
 
-printf '\n== C5: start rol ==\n'
-systemctl restart nxms-wallet-stub-a nxms-wallet-stub-b nxms-mailbox nxms-signer-a nxms-signer-b
+printf '\n== D: granica Monero ==\n'
+bash "$workspace/tools/nxms-monero-setup.sh"
+
+printf '\n== D: ceremonia multisig 2-of-3 ==\n'
+bash "$workspace/tools/nxms-multisig-ceremony.sh"
+
+printf '\n== C5+D: start rol ==\n'
+systemctl restart nxms-monerod-a
+sleep 5
+systemctl restart nxms-wallet-rpc-a nxms-wallet-rpc-b nxms-mailbox
 sleep 3
-systemctl is-active nxms-wallet-stub-a nxms-wallet-stub-b nxms-mailbox nxms-signer-a nxms-signer-b
+systemctl restart nxms-signer-a nxms-signer-b
+sleep 3
+systemctl is-active nxms-monerod-a nxms-wallet-rpc-a nxms-wallet-rpc-b nxms-mailbox nxms-signer-a nxms-signer-b

@@ -1,0 +1,30 @@
+[Unit]
+Description=NXMS monero-wallet-rpc (monero-a boundary, loopback-only, realny — sekcja D)
+After=network.target nxms-monerod-a.service
+Wants=nxms-monerod-a.service
+
+[Service]
+Type=simple
+User=monero-a
+Group=monero-a
+ExecStartPre=+/opt/nxms/bin/nxms-allinone-unseal monero-a
+ExecStart=/bin/sh -c 'exec /usr/bin/monero-wallet-rpc --stagenet --non-interactive \
+    --rpc-bind-ip 127.0.0.1 --rpc-bind-port 38088 \
+    --daemon-address 127.0.0.1:38081 \
+    --wallet-dir /var/lib/nxms-monero-a/wallets \
+    --rpc-login "wallet-rpc-user-a:$(cat /run/secrets/nxms-monero-a/wallet_rpc_password)" \
+    --log-level 0 --log-file /var/log/nxms-monero-a/wallet-rpc.log \
+    --max-log-file-size 10485760 --max-log-files 3'
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/var/log/nxms-monero-a/service.log
+StandardError=append:/var/log/nxms-monero-a/service.log
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nxms-monero-a /var/log/nxms-monero-a /run/secrets/nxms-monero-a
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target

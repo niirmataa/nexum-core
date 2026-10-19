@@ -1,0 +1,10 @@
+[Unit]
+Description=NXMS watchdog monerod-a (co 3 minuty)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=3min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
