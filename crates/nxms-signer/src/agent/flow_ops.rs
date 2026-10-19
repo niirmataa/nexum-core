@@ -477,6 +477,41 @@ impl SignerAgent {
                 req_id,
             )
             .await?;
+            // Artifact binding (design decision): record the sign event a second
+            // time under the SIGNED artifact hash so the submit path can tie the
+            // exact submitted bytes back to this approval. Both rows share the
+            // sign jti; the req_id keeps the sign_req_id() formula keyed by the
+            // artifact hash because verify_submit_multisig() recomputes proof
+            // req_ids over the submitted artifact hash and submit_multisig_flow()
+            // requires an exact (jti, req_id) match against the token proofs.
+            // When requested == signed the second insert is deduplicated on the
+            // row key and behavior is unchanged.
+            let signed_txset_hash_hex = txset_sha256_hex(&signed.tx_data_hex)?;
+            let artifact_req_id = sign_req_id(
+                &escrow_id_hex,
+                "sign_multisig",
+                &sign_round_for_audit,
+                &signed_txset_hash_hex,
+            );
+            self.db
+                .record_sign_event(
+                    &escrow_id_hex,
+                    &role_for_audit,
+                    &sign_round_for_audit,
+                    &signed_txset_hash_hex,
+                    jti,
+                    &artifact_req_id,
+                )
+                .await?;
+            maybe_store_quorum_sign_proof(
+                &escrow_id_hex,
+                &role_for_audit,
+                &sign_round_for_audit,
+                &signed_txset_hash_hex,
+                jti,
+                &artifact_req_id,
+            )
+            .await?;
         }
         let sign_success_detail = audit_security_detail(
             "sign_multisig",

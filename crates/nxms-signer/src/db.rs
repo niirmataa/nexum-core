@@ -758,6 +758,10 @@ fn init_sync(path: &PathBuf) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_consumed_action_jti_escrow ON consumed_action_jti(escrow_id_hex, consumed_at_ms DESC);
 
+        -- Sign provenance. A sign event is recorded under BOTH the requested
+        -- txset hash and the signed artifact hash (artifact binding, see
+        -- agent/flow_ops.rs). Both rows share the sign jti, so jti uniqueness
+        -- is scoped by txset_hash_hex; req_id values are distinct per hash key.
         CREATE TABLE IF NOT EXISTS sign_events (
             id                    INTEGER PRIMARY KEY AUTOINCREMENT,
             escrow_id_hex         TEXT NOT NULL,
@@ -768,7 +772,7 @@ fn init_sync(path: &PathBuf) -> Result<()> {
             req_id                TEXT NOT NULL,
             created_at_ms         INTEGER NOT NULL,
             UNIQUE(escrow_id_hex, role, sign_round, txset_hash_hex),
-            UNIQUE(jti),
+            UNIQUE(jti, txset_hash_hex),
             UNIQUE(req_id)
         );
         CREATE INDEX IF NOT EXISTS idx_sign_events_lookup ON sign_events(escrow_id_hex, txset_hash_hex, role, sign_round);
@@ -791,6 +795,63 @@ fn init_sync(path: &PathBuf) -> Result<()> {
         "#,
     )?;
     migrate_pending_tx_sign_schema_sync(&mut conn)?;
+    migrate_sign_events_schema_sync(&mut conn)?;
+    Ok(())
+}
+
+/// Migrate `sign_events` from the v1 schema (`UNIQUE(jti)`) to
+/// `UNIQUE(jti, txset_hash_hex)`.
+///
+/// Design decision (artifact binding): the sign event is recorded twice — under
+/// the requested txset hash (legacy key) and under the signed artifact hash —
+/// with the same sign `jti`, so `submit_multisig_flow` can tie the exact
+/// submitted bytes back to the approval. The v1 `UNIQUE(jti)` made the second
+/// insert collide and `record_sign_event_sync` uses `INSERT OR IGNORE`, so the
+/// artifact row was silently dropped and submits were denied with
+/// "missing local quorum proof event arbiter_first". Existing databases must be
+/// rebuilt once, otherwise the fix silently no-ops there.
+fn migrate_sign_events_schema_sync(conn: &mut Connection) -> Result<()> {
+    let create_sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='sign_events'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(create_sql) = create_sql else {
+        return Ok(());
+    };
+    if create_sql.contains("UNIQUE(jti, txset_hash_hex)") {
+        return Ok(());
+    }
+
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+        CREATE TABLE sign_events_new (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            escrow_id_hex         TEXT NOT NULL,
+            role                  TEXT NOT NULL,
+            sign_round            TEXT NOT NULL,
+            txset_hash_hex        TEXT NOT NULL,
+            jti                   TEXT NOT NULL,
+            req_id                TEXT NOT NULL,
+            created_at_ms         INTEGER NOT NULL,
+            UNIQUE(escrow_id_hex, role, sign_round, txset_hash_hex),
+            UNIQUE(jti, txset_hash_hex),
+            UNIQUE(req_id)
+        );
+        INSERT INTO sign_events_new(
+            id, escrow_id_hex, role, sign_round, txset_hash_hex, jti, req_id, created_at_ms
+        )
+        SELECT id, escrow_id_hex, role, sign_round, txset_hash_hex, jti, req_id, created_at_ms
+        FROM sign_events;
+        DROP TABLE sign_events;
+        ALTER TABLE sign_events_new RENAME TO sign_events;
+        CREATE INDEX IF NOT EXISTS idx_sign_events_lookup ON sign_events(escrow_id_hex, txset_hash_hex, role, sign_round);
+        "#,
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -2196,6 +2257,107 @@ mod tests {
             .await
             .expect("missing");
         assert!(!missing);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn sign_events_migration_relaxes_jti_uniqueness_and_keeps_rows() {
+        let db_path = unique_db_path("sign_events_migrate");
+        // v1 schema enforced UNIQUE(jti), which blocked the artifact-binding
+        // second row; init() must migrate old databases once.
+        {
+            let conn = Connection::open(&db_path).expect("open raw db");
+            conn.execute_batch(
+                r#"
+                CREATE TABLE sign_events (
+                    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                    escrow_id_hex         TEXT NOT NULL,
+                    role                  TEXT NOT NULL,
+                    sign_round            TEXT NOT NULL,
+                    txset_hash_hex        TEXT NOT NULL,
+                    jti                   TEXT NOT NULL,
+                    req_id                TEXT NOT NULL,
+                    created_at_ms         INTEGER NOT NULL,
+                    UNIQUE(escrow_id_hex, role, sign_round, txset_hash_hex),
+                    UNIQUE(jti),
+                    UNIQUE(req_id)
+                );
+                "#,
+            )
+            .expect("create v1 schema");
+            conn.execute(
+                r#"
+                INSERT INTO sign_events(
+                    escrow_id_hex, role, sign_round, txset_hash_hex, jti, req_id, created_at_ms
+                ) VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+                params![
+                    "00112233445566778899aabbccddeeff",
+                    "arbiter",
+                    "arbiter_first",
+                    "11".repeat(32),
+                    "jti-migrate",
+                    "req-migrate-legacy",
+                    1i64
+                ],
+            )
+            .expect("seed v1 row");
+        }
+
+        let db = SignerDb::new(db_path.clone());
+        db.init().await.expect("init migrates sign_events");
+
+        let legacy = db
+            .get_sign_event(
+                "00112233445566778899aabbccddeeff",
+                "arbiter",
+                "arbiter_first",
+                &"11".repeat(32),
+            )
+            .await
+            .expect("legacy lookup")
+            .expect("legacy row preserved by migration");
+        assert_eq!(legacy.jti, "jti-migrate");
+        assert_eq!(legacy.req_id, "req-migrate-legacy");
+
+        // Same jti under a different hash must now be kept (artifact row).
+        db.record_sign_event(
+            "00112233445566778899aabbccddeeff",
+            "arbiter",
+            "arbiter_first",
+            &"22".repeat(32),
+            "jti-migrate",
+            "req-migrate-artifact",
+        )
+        .await
+        .expect("record artifact row");
+
+        let artifact = db
+            .get_sign_event(
+                "00112233445566778899aabbccddeeff",
+                "arbiter",
+                "arbiter_first",
+                &"22".repeat(32),
+            )
+            .await
+            .expect("artifact lookup")
+            .expect("artifact row kept after migration");
+        assert_eq!(artifact.jti, "jti-migrate");
+        assert_eq!(artifact.req_id, "req-migrate-artifact");
+
+        // The legacy row must survive the artifact insert untouched.
+        let legacy = db
+            .get_sign_event(
+                "00112233445566778899aabbccddeeff",
+                "arbiter",
+                "arbiter_first",
+                &"11".repeat(32),
+            )
+            .await
+            .expect("legacy lookup after artifact")
+            .expect("legacy row still present");
+        assert_eq!(legacy.req_id, "req-migrate-legacy");
 
         let _ = std::fs::remove_file(db_path);
     }

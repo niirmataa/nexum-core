@@ -59,6 +59,9 @@ struct WalletMockState {
     describe_unlock_time: Mutex<u64>,
     describe_dummy_outputs: Mutex<u64>,
     sign_error_message: Mutex<Option<String>>,
+    /// Signed artifact returned by sign_multisig. Tests can diverge it from the
+    /// requested txset (real Monero returns a new blob, not the echoed request).
+    sign_tx_data_hex: Mutex<String>,
     submit_error_message: Mutex<Option<String>>,
     consume_check: Mutex<Option<ConsumeCheck>>,
     consumed_seen_on_sign: Mutex<Option<bool>>,
@@ -74,6 +77,7 @@ impl Default for WalletMockState {
             describe_unlock_time: Mutex::new(0),
             describe_dummy_outputs: Mutex::new(0),
             sign_error_message: Mutex::new(None),
+            sign_tx_data_hex: Mutex::new("aa11".to_string()),
             submit_error_message: Mutex::new(None),
             consume_check: Mutex::new(None),
             consumed_seen_on_sign: Mutex::new(None),
@@ -191,11 +195,16 @@ async fn wallet_rpc_handler(
                     }
                 }));
             }
+            let signed_tx_data = state
+                .sign_tx_data_hex
+                .lock()
+                .expect("sign_tx_data_hex lock")
+                .clone();
             Json(json!({
                 "jsonrpc":"2.0",
                 "id":"0",
                 "result": {
-                    "tx_data_hex": "aa11",
+                    "tx_data_hex": signed_tx_data,
                     "tx_hash_list": ["abcd"]
                 }
             }))
@@ -1534,6 +1543,221 @@ async fn submit_multisig_flow_rejects_when_arbiter_proof_does_not_match_local_ev
     assert_eq!(wallet_call_count(&h.wallet_state, "submit_multisig"), 0);
     assert_eq!(sign_request_status(&h.db_path, &submit_req_id), None);
     assert!(consumed_jti_exists(&h.db_path, "jti-submit-proof-mismatch"));
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&h.db_path);
+}
+
+#[tokio::test]
+async fn sign_multisig_flow_records_sign_event_under_signed_artifact_hash() {
+    let mut h = setup_harness("sign_artifact_hash_row").await;
+    let fixture = install_action_token_verifier(&mut h.agent, true, "sign-artifact-hash-row");
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&h.agent.db, escrow_id_hex).await;
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+    // Real-wallet divergence: the signed artifact has different bytes than the
+    // requested txset (Monero sign_multisig returns a new blob).
+    *h.wallet_state
+        .sign_tx_data_hex
+        .lock()
+        .expect("sign_tx_data_hex lock") = "bb22".to_string();
+    let requested_hash = txset_sha256_hex("aa11").expect("requested hash");
+    let signed_hash = txset_sha256_hex("bb22").expect("signed hash");
+    assert_ne!(requested_hash, signed_hash);
+
+    let sign_jti = "jti-artifact-hash-sign";
+    let sign_token = build_sign_action_token(
+        &h.agent,
+        &fixture,
+        escrow_id_hex,
+        &requested_hash,
+        &snapshot_hash_for_token,
+        sign_jti,
+    );
+    let signed = h
+        .agent
+        .sign_multisig_flow(escrow_id_hex, EscrowAction::Release, "aa11", Some(&sign_token))
+        .await
+        .expect("sign flow");
+    assert_eq!(signed.tx_data_hex, "bb22");
+
+    let legacy_row = h
+        .agent
+        .db
+        .get_sign_event(escrow_id_hex, "arbiter", "arbiter_first", &requested_hash)
+        .await
+        .expect("legacy sign event lookup")
+        .expect("legacy sign event under requested txset hash");
+    assert_eq!(legacy_row.jti, sign_jti);
+    assert_eq!(
+        legacy_row.req_id,
+        sign_req_id(escrow_id_hex, "sign_multisig", "arbiter_first", &requested_hash)
+    );
+
+    let artifact_row = h
+        .agent
+        .db
+        .get_sign_event(escrow_id_hex, "arbiter", "arbiter_first", &signed_hash)
+        .await
+        .expect("artifact sign event lookup")
+        .expect("artifact sign event under signed artifact hash");
+    assert_eq!(artifact_row.jti, sign_jti);
+    assert_eq!(
+        artifact_row.req_id,
+        sign_req_id(escrow_id_hex, "sign_multisig", "arbiter_first", &signed_hash)
+    );
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&h.db_path);
+}
+
+#[tokio::test]
+async fn submit_multisig_flow_accepts_sign_event_under_signed_artifact_hash() {
+    let mut h = setup_harness("submit_flow_signed_artifact").await;
+    let fixture = install_action_token_verifier(&mut h.agent, true, "submit-flow-signed-artifact");
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&h.agent.db, escrow_id_hex).await;
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+    // Regression scenario: requested txset "aa11", signed artifact "bb22".
+    // Before the artifact-binding fix the submit lookup under the signed hash
+    // found no sign event and failed with
+    // "submit denied: missing local quorum proof event arbiter_first".
+    *h.wallet_state
+        .sign_tx_data_hex
+        .lock()
+        .expect("sign_tx_data_hex lock") = "bb22".to_string();
+    let requested_hash = txset_sha256_hex("aa11").expect("requested hash");
+    let signed_hash = txset_sha256_hex("bb22").expect("signed hash");
+    assert_ne!(requested_hash, signed_hash);
+
+    let sign_jti = "jti-signed-artifact-sign";
+    let sign_token = build_sign_action_token(
+        &h.agent,
+        &fixture,
+        escrow_id_hex,
+        &requested_hash,
+        &snapshot_hash_for_token,
+        sign_jti,
+    );
+    let signed = h
+        .agent
+        .sign_multisig_flow(escrow_id_hex, EscrowAction::Release, "aa11", Some(&sign_token))
+        .await
+        .expect("sign flow");
+    assert_eq!(signed.tx_data_hex, "bb22");
+
+    // The submit token binds the SUBMITTED bytes; proof req_ids follow the
+    // unchanged sign_req_id() formula keyed by the signed artifact hash.
+    let proof_arbiter_req_id =
+        sign_req_id(escrow_id_hex, "sign_multisig", "arbiter_first", &signed_hash);
+    let proof_seller_req_id =
+        sign_req_id(escrow_id_hex, "sign_multisig", "seller_second", &signed_hash);
+    let submit_token = build_submit_action_token(
+        &h.agent,
+        &fixture,
+        escrow_id_hex,
+        &signed_hash,
+        &snapshot_hash_for_token,
+        "jti-signed-artifact-submit",
+        sign_jti,
+        &proof_arbiter_req_id,
+        "proof-jti-seller-signed-artifact",
+        &proof_seller_req_id,
+    );
+    let tx_hashes = h
+        .agent
+        .submit_multisig_flow(escrow_id_hex, EscrowAction::Release, "bb22", Some(&submit_token))
+        .await
+        .expect("submit must accept the sign event recorded under the signed artifact hash");
+    assert_eq!(tx_hashes, vec!["submithash".to_string()]);
+    assert_eq!(wallet_call_count(&h.wallet_state, "submit_multisig"), 1);
+
+    remove_file_quiet(&fixture.key_path);
+    remove_file_quiet(&h.db_path);
+}
+
+#[tokio::test]
+async fn approve_pending_records_sign_event_under_signed_artifact_hash() {
+    let mut h = setup_harness("approve_artifact_hash_row").await;
+    let fixture = install_action_token_verifier(&mut h.agent, true, "approve-artifact-hash-row");
+    let escrow_id_hex = "00112233445566778899aabbccddeeff";
+    let snapshot = seed_active_snapshot(&h.agent.db, escrow_id_hex).await;
+    let snapshot_hash = canonical_hash_hex(&snapshot).expect("snapshot hash");
+    let snapshot_hash_for_token = canonical_policy_hash_sha256_hex(&snapshot).expect("policy hash");
+    *h.wallet_state
+        .sign_tx_data_hex
+        .lock()
+        .expect("sign_tx_data_hex lock") = "bb22".to_string();
+    let requested_hash = txset_sha256_hex("aa11").expect("requested hash");
+    let signed_hash = txset_sha256_hex("bb22").expect("signed hash");
+    assert_ne!(requested_hash, signed_hash);
+
+    let id = enqueue_pending(
+        &h.agent,
+        escrow_id_hex,
+        1,
+        "pending",
+        &snapshot_hash,
+        requested_hash.clone(),
+    )
+    .await;
+    let sign_jti = "jti-approve-artifact-hash";
+    let sign_token = build_sign_action_token(
+        &h.agent,
+        &fixture,
+        escrow_id_hex,
+        &requested_hash,
+        &snapshot_hash_for_token,
+        sign_jti,
+    );
+    h.agent
+        .approve_pending(id, Some(&sign_token))
+        .await
+        .expect("approve pending");
+
+    // The CLI approve path must mirror the artifact-binding dual record.
+    let artifact_row = h
+        .agent
+        .db
+        .get_sign_event(escrow_id_hex, "arbiter", "arbiter_first", &signed_hash)
+        .await
+        .expect("artifact sign event lookup")
+        .expect("artifact sign event under signed artifact hash");
+    assert_eq!(artifact_row.jti, sign_jti);
+    assert_eq!(
+        artifact_row.req_id,
+        sign_req_id(escrow_id_hex, "sign_multisig", "arbiter_first", &signed_hash)
+    );
+    let legacy_row = h
+        .agent
+        .db
+        .get_sign_event(escrow_id_hex, "arbiter", "arbiter_first", &requested_hash)
+        .await
+        .expect("legacy sign event lookup")
+        .expect("legacy sign event under requested txset hash");
+    assert_eq!(legacy_row.jti, sign_jti);
+
+    // sign -> submit round trip on the divergent artifact.
+    let proof_seller_req_id =
+        sign_req_id(escrow_id_hex, "sign_multisig", "seller_second", &signed_hash);
+    let submit_token = build_submit_action_token(
+        &h.agent,
+        &fixture,
+        escrow_id_hex,
+        &signed_hash,
+        &snapshot_hash_for_token,
+        "jti-approve-artifact-submit",
+        sign_jti,
+        &artifact_row.req_id,
+        "proof-jti-seller-approve-artifact",
+        &proof_seller_req_id,
+    );
+    let tx_hashes = h
+        .agent
+        .submit_multisig_flow(escrow_id_hex, EscrowAction::Release, "bb22", Some(&submit_token))
+        .await
+        .expect("submit must accept the approve-path artifact sign event");
+    assert_eq!(tx_hashes, vec!["submithash".to_string()]);
 
     remove_file_quiet(&fixture.key_path);
     remove_file_quiet(&h.db_path);

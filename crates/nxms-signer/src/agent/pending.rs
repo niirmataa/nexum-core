@@ -415,6 +415,27 @@ impl SignerAgent {
                     req_id,
                 )
                 .await?;
+            // Artifact binding (mirrors sign_multisig_flow): second sign event
+            // under the SIGNED artifact hash, req_id keyed by that hash, so
+            // submit_multisig_flow can tie the exact submitted bytes back to
+            // this approval (design decision, see agent/flow_ops.rs).
+            let signed_txset_hash_hex = txset_sha256_hex(&signed.tx_data_hex)?;
+            let artifact_req_id = sign_req_id(
+                &pending.escrow_id_hex,
+                "sign_multisig",
+                &sign_round_for_audit,
+                &signed_txset_hash_hex,
+            );
+            self.db
+                .record_sign_event(
+                    &pending.escrow_id_hex,
+                    &role_for_audit,
+                    &sign_round_for_audit,
+                    &signed_txset_hash_hex,
+                    jti,
+                    &artifact_req_id,
+                )
+                .await?;
         }
 
         let sign_success_detail = audit_security_detail(
