@@ -835,7 +835,9 @@ mod tests {
             peers_path: PathBuf::from("peers.json"),
             host_vault_dir: PathBuf::from("host-vault"),
             host_vault_passphrase: "correct horse battery".to_string(),
-            runtime_trust_bundle_path: None,
+            runtime_trust_bundle_path: Some(PathBuf::from(
+                "/var/lib/nxms/bootstrap/runtime-trust.final.json",
+            )),
             db_path: PathBuf::from("signer.db"),
             mailbox_url: "http://mailbox.onion".to_string(),
             mailbox_push_token: Some("1234567890abcdef-push".to_string()),
