@@ -1015,6 +1015,7 @@ dependencies = [
  "nxms-escrow-orchestrator",
  "nxms-mailbox",
  "nxms-mailbox-client",
+ "nxms-peer",
  "nxms-signer",
  "nxms-transport",
  "privai-chain",
@@ -1046,6 +1047,24 @@ dependencies = [
  "toml",
  "tracing",
  "zeroize",
+]
+
+[[package]]
+name = "nxms-peer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "hex",
+ "libc",
+ "nxms-mailbox-client",
+ "nxms-transport",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
