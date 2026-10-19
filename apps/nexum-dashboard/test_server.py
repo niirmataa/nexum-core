@@ -1,9 +1,12 @@
 """Serial tests of the demo HTTP flow, not cryptographic verification."""
 import http.client
 import json
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 
+import server
 from server import DEMO_PASSWORD, DemoServer
 
 
@@ -26,7 +29,7 @@ class DashboardTests(unittest.TestCase):
         self.csrf = body["csrf"]
 
     def request(self, method, path, data=None, headers=None):
-        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=20)
         base = {"Cookie": self.cookie}
         if method == "POST":
             base.update({"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{self.server.server_port}", "X-Nexum-CSRF": self.csrf})
@@ -129,8 +132,9 @@ class DashboardTests(unittest.TestCase):
         status, body = self.request("GET", "/api/system/status")
         self.assertEqual(status, 200)
         self.assertTrue(body["live"])
-        self.assertEqual(len(body["services"]), 5)
+        self.assertEqual(len(body["services"]), 6)
         self.assertIn("trust", body)
+        self.assertIn("monero", body)
         self.assertIn("agents", body)
         status, _ = self.request("POST", "/api/system/status", {})
         self.assertEqual(status, 404)
@@ -149,6 +153,116 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("Brak rzeczywistego połączenia", text)
         self.assertNotIn('src="https://', text)
         self.assertNotIn('href="https://', text)
+
+
+    def test_lab_status_without_state_file(self):
+        original = server.LAB_STATE_PATH
+        server.LAB_STATE_PATH = original.parent / "definitely-missing-lab.json"
+        try:
+            status, body = self.request("GET", "/api/lab/status")
+        finally:
+            server.LAB_STATE_PATH = original
+        self.assertEqual(status, 200)
+        self.assertTrue(body["lab"])
+        self.assertEqual(body["instances"], [])
+
+    def test_lab_status_reads_instances_and_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lab.json"
+            path.write_text(json.dumps({
+                "generated_at": "2026-10-19T00:00:00+00:00",
+                "instances": [
+                    {"id": "lab-01", "state": "confirmed", "address": "5XX", "funded_xmr": 2.0,
+                     "tx_hash": "abc", "confirmations": 12, "created_at": "", "note": ""},
+                    {"id": "lab-02", "state": "failed", "address": "", "funded_xmr": 0.0,
+                     "tx_hash": "", "confirmations": 0, "created_at": "", "note": "make"},
+                ],
+            }), encoding="utf-8")
+            original = server.LAB_STATE_PATH
+            server.LAB_STATE_PATH = path
+            try:
+                status, body = self.request("GET", "/api/lab/status")
+            finally:
+                server.LAB_STATE_PATH = original
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["instances"]), 2)
+        self.assertEqual(body["summary"], {"confirmed": 1, "failed": 1})
+
+    def test_tasks_status_without_state_dir(self):
+        original = server.TASKS_STATE_PATH
+        server.TASKS_STATE_PATH = original.parent / "definitely-missing-tasks"
+        try:
+            status, body = self.request("GET", "/api/tasks/status")
+        finally:
+            server.TASKS_STATE_PATH = original
+        self.assertEqual(status, 200)
+        self.assertTrue(body["tasks"])
+        self.assertEqual(body["instances"], [])
+        self.assertEqual(body["summary"], {})
+
+    def test_tasks_status_reads_instances_and_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "task-01.json").write_text(json.dumps({
+                "id": "task-01", "kind": "allinone", "state": "running",
+                "step": "ceremonia multisig", "container": "nxms-task-01",
+                "started_at": "2026-10-19T10:00:00Z", "finished_at": "",
+                "created_at": "2026-10-19T09:59:00Z",
+                "roles": [
+                    {"name": "mailbox", "state": "active", "detail": ""},
+                    {"name": "signer-a", "state": "active", "detail": ""},
+                    {"name": "signer-b", "state": "active", "detail": ""},
+                    {"name": "monero-a", "state": "active", "detail": "wallet-rpc 0.18.5"},
+                ],
+                "onion": {"mailbox": "xxxx.onion"}, "note": ""}), encoding="utf-8")
+            (root / "task-02.json").write_text(json.dumps({
+                "id": "task-02", "kind": "multisig", "state": "done",
+                "step": "", "container": "nxms-task-02",
+                "started_at": "2026-10-19T08:00:00Z", "finished_at": "2026-10-19T08:30:00Z",
+                "created_at": "2026-10-19T07:59:00Z",
+                "roles": [{"name": "mailbox", "state": "active", "detail": ""}],
+                "onion": {}, "note": "zamkniete"}), encoding="utf-8")
+            (root / "broken.json").write_text("{ups", encoding="utf-8")
+            original = server.TASKS_STATE_PATH
+            server.TASKS_STATE_PATH = root
+            try:
+                status, body = self.request("GET", "/api/tasks/status")
+            finally:
+                server.TASKS_STATE_PATH = original
+        self.assertEqual(status, 200)
+        self.assertTrue(body["tasks"])
+        self.assertEqual(len(body["instances"]), 2)
+        self.assertEqual(body["summary"], {"running": 1, "done": 1})
+        first = body["instances"][0]
+        self.assertEqual(first["id"], "task-01")
+        self.assertEqual(first["step"], "ceremonia multisig")
+        self.assertEqual(len(first["roles"]), 4)
+        self.assertEqual(first["roles"][3]["detail"], "wallet-rpc 0.18.5")
+
+    def test_tasks_status_tolerates_partial_instances(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "partial.json").write_text(json.dumps({
+                "roles": [{"detail": 7}, "junk"], "note": 42, "onion": "x"}), encoding="utf-8")
+            (root / "not-object.json").write_text("[]", encoding="utf-8")
+            original = server.TASKS_STATE_PATH
+            server.TASKS_STATE_PATH = root
+            try:
+                status, body = self.request("GET", "/api/tasks/status")
+            finally:
+                server.TASKS_STATE_PATH = original
+        self.assertEqual(status, 200)
+        self.assertTrue(body["tasks"])
+        self.assertEqual(len(body["instances"]), 1)
+        task = body["instances"][0]
+        self.assertEqual(task["id"], "partial")
+        self.assertEqual(task["state"], "unknown")
+        self.assertIsInstance(task["note"], str)
+        self.assertIsInstance(task["step"], str)
+        self.assertEqual(task["onion"], {})
+        self.assertEqual(len(task["roles"]), 1)
+        self.assertIsInstance(task["roles"][0]["detail"], str)
+        self.assertEqual(body["summary"], {"unknown": 1})
 
 
 if __name__ == "__main__":

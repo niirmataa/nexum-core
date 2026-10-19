@@ -10,12 +10,17 @@ import subprocess
 import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PUBLIC = Path(__file__).with_name("public")
+LAB_STATE_PATH = Path(__import__("os").environ.get(
+    "NXMS_LAB_STATE", str(Path.home() / ".local/share/nxms-lab/lab.json")))
+TASKS_STATE_PATH = Path(__import__("os").environ.get(
+    "NXMS_TASKS_STATE", str(Path.home() / ".local/share/nxms-tasks/")))
 DEMO_PASSWORD = "nexum-demo-2026"
 CHALLENGE_TTL = 120
 ACCESS_TTL = 300
@@ -164,8 +169,9 @@ class DemoSession:
 # --- System: zywy podgląd all-in-one (dane operacyjne, nie escrow). ---
 
 SYSTEM_SERVICES = [
-    ("nxms-wallet-stub-a", "monero-a · stub wallet-rpc"),
-    ("nxms-wallet-stub-b", "monero-b · stub wallet-rpc"),
+    ("nxms-monerod-a", "monero-a · monerod (Tor-only)"),
+    ("nxms-wallet-rpc-a", "monero-a · wallet-rpc"),
+    ("nxms-wallet-rpc-b", "monero-b · wallet-rpc"),
     ("nxms-mailbox", "mailbox · relay"),
     ("nxms-signer-a", "signer-a · capability node"),
     ("nxms-signer-b", "signer-b · capability node"),
@@ -211,9 +217,9 @@ def system_status():
     def mailbox_onion():
         onion = MAILBOX_ONION_PATH.read_text().strip()
         out = subprocess.run(
-            ["curl", "-s", "--max-time", "8", "--socks5-hostname", "127.0.0.1:9050",
+            ["curl", "-s", "--max-time", "5", "--socks5-hostname", "127.0.0.1:9050",
              f"http://{onion}/health"],
-            capture_output=True, text=True, timeout=12)
+            capture_output=True, text=True, timeout=8)
         return {"address": onion, "ok": json.loads(out.stdout).get("ok") is True}
 
     def stubs():
@@ -249,15 +255,111 @@ def system_status():
                                          "last_line": "brak logu"})
         return result
 
+    def monero():
+        with urllib.request.urlopen("http://127.0.0.1:38081/get_info", timeout=3) as response:
+            info = json.loads(response.read())
+        return {"height": info.get("height", 0),
+                "synchronized": info.get("synchronized") is True,
+                "nettype": "stagenet" if info.get("stagenet") else "?",
+                "outgoing": info.get("outgoing_connections_count", 0)}
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {name: pool.submit(fn) for name, fn in (
+            ("services", services), ("local", mailbox_local), ("onion", mailbox_onion),
+            ("stubs", stubs), ("monero", monero), ("trust", trust), ("agents", agents))}
+
+    def result(name, default):
+        try:
+            return futures[name].result()
+        except Exception:
+            return default
+
     return {
         "live": True,
         "observed_at": iso(),
-        "services": _safe(services, []),
-        "mailbox": {"local": _safe(mailbox_local, False),
-                    "onion": _safe(mailbox_onion, {"address": "?", "ok": False})},
-        "wallet_stubs": stubs(),
-        "trust": _safe(trust, {"epoch": "nieznany", "signers": [], "signatures": 0}),
-        "agents": agents(),
+        "services": result("services", []),
+        "mailbox": {"local": result("local", False),
+                    "onion": result("onion", {"address": "?", "ok": False})},
+        "wallet_stubs": result("stubs", {}),
+        "monero": result("monero", {"height": 0, "synchronized": False,
+                                    "nettype": "?", "outgoing": 0}),
+        "trust": result("trust", {"epoch": "nieznany", "signers": [], "signatures": 0}),
+        "agents": result("agents", {}),
+    }
+
+
+def lab_status():
+    """Stan labu multisig — dane z tools/l.sh (lab.json), bez wywolan zewnetrznych."""
+    try:
+        data = json.loads(LAB_STATE_PATH.read_text())
+    except (OSError, ValueError):
+        data = {}
+    raw = data.get("instances")
+    instances = [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+    summary = {}
+    for instance in instances:
+        state = instance.get("state", "unknown")
+        summary[state] = summary.get(state, 0) + 1
+    return {
+        "lab": True,
+        "observed_at": iso(),
+        "generated_at": data.get("generated_at"),
+        "summary": summary,
+        "instances": instances,
+    }
+
+
+def _text(value):
+    """Pole tekstowe — obce typy z uszkodzonych zapisow nie psuja odpowiedzi."""
+    return value if isinstance(value, str) else ""
+
+
+def tasks_status():
+    """Zadania dockerowe — kolejne instancje all-in-one z katalogu *.json."""
+    try:
+        files = sorted(TASKS_STATE_PATH.glob("*.json"))
+    except OSError:
+        files = []
+    instances = []
+    for path in files:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        roles = []
+        roles_raw = data.get("roles")
+        if isinstance(roles_raw, list):
+            for role in roles_raw:
+                if isinstance(role, dict):
+                    roles.append({"name": _text(role.get("name")),
+                                  "state": _text(role.get("state")) or "unknown",
+                                  "detail": _text(role.get("detail"))})
+        onion_raw = data.get("onion")
+        onion = {str(key): _text(value) for key, value in onion_raw.items()} \
+            if isinstance(onion_raw, dict) else {}
+        instances.append({
+            "id": _text(data.get("id")) or path.stem,
+            "kind": _text(data.get("kind")),
+            "state": _text(data.get("state")) or "unknown",
+            "step": _text(data.get("step")),
+            "container": _text(data.get("container")),
+            "started_at": _text(data.get("started_at")),
+            "finished_at": _text(data.get("finished_at")),
+            "created_at": _text(data.get("created_at")),
+            "roles": roles,
+            "onion": onion,
+            "note": _text(data.get("note")),
+        })
+    summary = {}
+    for instance in instances:
+        summary[instance["state"]] = summary.get(instance["state"], 0) + 1
+    return {
+        "tasks": True,
+        "observed_at": iso(),
+        "summary": summary,
+        "instances": instances,
     }
 
 
@@ -340,6 +442,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self.path == "/api/system/status":
                 self.respond(200, system_status())
+                return
+            if self.path == "/api/lab/status":
+                self.respond(200, lab_status())
+                return
+            if self.path == "/api/tasks/status":
+                self.respond(200, tasks_status())
                 return
             with self.server.sessions_lock:
                 if self.path == "/api/demo/bootstrap":

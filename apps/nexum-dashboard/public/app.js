@@ -36,11 +36,66 @@ function renderSystem(result) {
     systemItem("epoch", trust.epoch || "nieznany", "info"),
     systemItem("quorum", (trust.signers || []).join(" + ") || "brak", (trust.signatures === 2) ? "ok" : "bad"),
   ]);
+  const monero = result.monero || {};
+  fillSystemList("system-monero", [
+    systemItem("wysokość łańcucha", String(monero.height ?? "?"), monero.synchronized ? "ok" : "info"),
+    systemItem("synchronizacja", monero.synchronized ? "tak" : "nie", monero.synchronized ? "ok" : "bad"),
+    systemItem("pary wychodzące", String(monero.outgoing ?? 0), (monero.outgoing ?? 0) > 0 ? "ok" : "info"),
+    systemItem("sieć", monero.nettype || "?", "info"),
+  ]);
   const agents = result.agents || {};
   fillSystemList("system-agents", Object.entries(agents).map(([name, agent]) =>
     systemItem(name,
       agent.started ? `aktywny · retry pull: ${agent.pull_failures}` : "nie wystartował",
       agent.started ? "ok" : "bad")));
+}
+
+function renderLab(result) {
+  const instances = result.instances || [];
+  const stateMap = {
+    confirmed: "ok", confirming: "info", funded: "info",
+    ready: "info", created: "unknown", failed: "bad",
+  };
+  const items = instances.length
+    ? instances.map((inst) => {
+        const address = (inst.address || "").slice(0, 10);
+        const detail = inst.state === "confirmed"
+          ? `potwierdzone · ${inst.confirmations ?? 0} bloków`
+          : inst.state === "confirming"
+            ? `potwierdzenia: ${inst.confirmations ?? 0}`
+            : inst.tx_hash
+              ? `${inst.state} · tx ${inst.tx_hash.slice(0, 8)}`
+              : `${inst.state || "?"}`;
+        return systemItem(`${inst.id} · ${address}…`, detail, stateMap[inst.state] || "unknown");
+      })
+    : [systemItem("instancje", "brak — bash tools/l.sh up", "info")];
+  fillSystemList("system-lab", items);
+}
+
+function renderTasks(result) {
+  const instances = result.instances || [];
+  const stateMap = {
+    done: "ok", running: "ok", queued: "info",
+    degraded: "info", failed: "bad", stopped: "unknown",
+  };
+  const items = instances.length
+    ? instances.flatMap((inst) => {
+        const roles = (inst.roles || []).filter((role) => role && typeof role === "object");
+        const active = roles.filter((role) => role.state === "active").length;
+        const kind = inst.kind === "multisig" ? "ceremonia multisig" : "all-in-one";
+        const state = inst.state || "?";
+        const step = inst.step ? ` · krok: ${inst.step}` : "";
+        const details = roles.filter((role) => role.detail)
+          .map((role) => `${role.name || "?"}: ${role.detail}`).join(" · ");
+        return [
+          systemItem(`${inst.id || "?"} · ${kind}`, `${state}${step}`, stateMap[inst.state] || "unknown"),
+          systemItem(`${inst.id || "?"} · role`,
+            `${active}/${roles.length} aktywnych${details ? ` · ${details}` : ""}`,
+            roles.length > 0 && active === roles.length ? "ok" : "info"),
+        ];
+      })
+    : [systemItem("instancje", "brak — bash tools/nxms-stack.sh up", "info")];
+  fillSystemList("system-tasks", items);
 }
 
 async function refreshSystem() {
@@ -50,12 +105,23 @@ async function refreshSystem() {
   } catch (_error) {
     /* panel System nie przerywa przeplywu demo */
   }
+  try {
+    const response = await fetch("/api/lab/status", { credentials: "same-origin", cache: "no-store" });
+    renderLab(await response.json());
+  } catch (_error) {
+    /* panel Lab nie przerywa przeplywu demo */
+  }
+  try {
+    const response = await fetch("/api/tasks/status", { credentials: "same-origin", cache: "no-store" });
+    renderTasks(await response.json());
+  } catch (_error) {
+    /* panel Zadan nie przerywa przeplywu demo */
+  }
 }
 
 refreshSystem();
 setInterval(refreshSystem, 10000);
 
-const $ = (id) => document.getElementById(id);
 const state = { csrf: "", phase: "connect", escrows: [], selected: null, challenge: null,
   offline: false, connected: false, busy: false, polling: false, timer: null,
   generation: 0, pendingRefresh: false, backendDown: false };
