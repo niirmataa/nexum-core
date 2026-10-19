@@ -187,21 +187,23 @@ impl WalletRpcClient {
         });
 
         let mut resp = self.post_json_rpc(&json_rpc_url, &payload, None).await?;
-        if resp.status() == StatusCode::UNAUTHORIZED {
-            let challenge_1 = DigestChallenge::from_headers(resp.headers())
-                .ok_or_else(|| anyhow!("wallet-rpc returned 401 without digest challenge"))?;
-            let uri = digest_uri_for_request(&json_rpc_url)?;
-            resp = self
-                .post_json_rpc_with_digest(&json_rpc_url, &payload, &uri, &challenge_1)
-                .await?;
-            if resp.status() == StatusCode::UNAUTHORIZED
-                && let Some(challenge_2) = DigestChallenge::from_headers(resp.headers())
-                && (challenge_2.stale || challenge_2.nonce != challenge_1.nonce)
-            {
-                resp = self
-                    .post_json_rpc_with_digest(&json_rpc_url, &payload, &uri, &challenge_2)
-                    .await?;
+        let uri = digest_uri_for_request(&json_rpc_url)?;
+        // epee (wallet-rpc) wiaze nonce digest z polaczeniem TCP: jesli tresc
+        // odpowiedzi 401 nie zostanie skonsumowana, reqwest wyrzuca polaczenie
+        // z puli, a powtorka na NOWYM polaczeniu dostaje juz niewazny nonce
+        // (401 mimo poprawnego digestu). Dlatego kazde wyzwanie odpowiadamy
+        // na tym samym polaczeniu (konsumujac cialo 401) i dopuszczamy kilka
+        // rund wyzwania (serwer moze wygenerowac nowy nonce).
+        for _ in 0..3 {
+            if resp.status() != StatusCode::UNAUTHORIZED {
+                break;
             }
+            let challenge = DigestChallenge::from_headers(resp.headers())
+                .ok_or_else(|| anyhow!("wallet-rpc returned 401 without digest challenge"))?;
+            resp.bytes().await?;
+            resp = self
+                .post_json_rpc_with_digest(&json_rpc_url, &payload, &uri, &challenge)
+                .await?;
         }
 
         if !resp.status().is_success() {
@@ -680,5 +682,141 @@ mod tests {
         let h = "Digest realm=\"monero-rpc\",nonce=\"abc123\",stale=true,qop=\"auth\"";
         let c = DigestChallenge::parse_header(h).expect("challenge");
         assert!(c.stale);
+    }
+}
+
+// --- Regresja: epee (wallet-rpc) wiaze nonce digest z polaczeniem TCP --------
+#[cfg(test)]
+mod digest_connection_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const REALM: &str = "monero-rpc";
+
+    fn read_request(stream: &mut TcpStream) -> Option<(String, String)> {
+        let mut data = Vec::new();
+        let mut byte = [0u8; 1];
+        loop {
+            if stream.read(&mut byte).ok()? == 0 {
+                return None;
+            }
+            data.push(byte[0]);
+            if data.ends_with(b"\r\n\r\n") {
+                break;
+            }
+            if data.len() > 65536 {
+                return None;
+            }
+        }
+        let head = String::from_utf8_lossy(&data).to_string();
+        let mut content_length = 0usize;
+        for line in head.lines() {
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0u8; content_length];
+        if content_length > 0 {
+            stream.read_exact(&mut body).ok()?;
+        }
+        Some((head, String::from_utf8_lossy(&body).to_string()))
+    }
+
+    fn digest_ok(auth: &str, nonce: &str, user: &str, pass: &str) -> bool {
+        let attrs = parse_digest_attributes(auth.trim_start_matches("Digest").trim());
+        if attrs.get("username").map(String::as_str) != Some(user) {
+            return false;
+        }
+        // Jak w epee: nonce jest wiazany z polaczeniem TCP.
+        if attrs.get("nonce").map(String::as_str) != Some(nonce) {
+            return false;
+        }
+        let uri = attrs.get("uri").cloned().unwrap_or_default();
+        if uri != "/json_rpc" {
+            return false;
+        }
+        let nc = attrs.get("nc").cloned().unwrap_or_default();
+        let cnonce = attrs.get("cnonce").cloned().unwrap_or_default();
+        let qop = attrs.get("qop").cloned().unwrap_or_default();
+        let ha1 = md5_hex(&format!("{user}:{REALM}:{pass}"));
+        let ha2 = md5_hex(&format!("POST:{uri}"));
+        let expected = if qop.is_empty() {
+            md5_hex(&format!("{ha1}:{nonce}:{ha2}"))
+        } else {
+            md5_hex(&format!("{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}"))
+        };
+        attrs.get("response").map(String::as_str) == Some(expected.as_str())
+    }
+
+    fn handle_conn(mut stream: TcpStream, user: String, pass: String) {
+        let nonce = random_cnonce();
+        while let Some((head, _body)) = read_request(&mut stream) {
+            let authorized = head
+                .lines()
+                .find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+                .and_then(|line| line.splitn(2, ':').nth(1))
+                .map(|value| digest_ok(value.trim(), &nonce, &user, &pass))
+                .unwrap_or(false);
+            let response = if authorized {
+                let body = r#"{"jsonrpc":"2.0","id":"0","result":{}}"#;
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            } else {
+                let body = "<html><head><title>Unauthorized Access</title></head></html>";
+                format!(
+                    "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Digest qop=\"auth\",algorithm=MD5,realm=\"{REALM}\",nonce=\"{nonce}\",stale=false\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+                    body.len(),
+                    body
+                )
+            };
+            if stream.write_all(response.as_bytes()).is_err() {
+                return;
+            }
+            let _ = stream.flush();
+        }
+    }
+
+    fn spawn_server(user: &str, pass: &str) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let total = Arc::new(AtomicUsize::new(0));
+        let counter = total.clone();
+        let (user, pass) = (user.to_string(), pass.to_string());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                counter.fetch_add(1, Ordering::SeqCst);
+                let (u, p) = (user.clone(), pass.clone());
+                std::thread::spawn(move || handle_conn(stream, u, p));
+            }
+        });
+        (format!("http://{addr}"), total)
+    }
+
+    #[tokio::test]
+    async fn digest_auth_is_answered_on_the_same_tcp_connection() {
+        let (endpoint, connections) = spawn_server("wallet-rpc-user-a", "secret-pass-123");
+        let client = WalletRpcClient::new(
+            endpoint,
+            "escrow_wallet_a".to_string(),
+            "wallet-pass".to_string(),
+            "wallet-rpc-user-a".to_string(),
+            "secret-pass-123".to_string(),
+        )
+        .expect("client");
+        client
+            .ensure_wallet_open()
+            .await
+            .expect("digest powinien przejsc na jednym polaczeniu");
+        assert_eq!(
+            connections.load(Ordering::SeqCst),
+            1,
+            "wyzwanie digest musi byc obsluzone na tym samym polaczeniu TCP (nonce epee)"
+        );
     }
 }
