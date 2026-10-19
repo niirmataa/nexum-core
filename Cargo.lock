@@ -968,6 +968,7 @@ dependencies = [
  "clap",
  "nxms-transport",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

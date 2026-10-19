@@ -66,6 +66,7 @@ async fn peer_sign_req_roundtrip_via_mailbox() -> Result<()> {
         multisig_txset_hex: txset_hex.clone(),
         snapshot_hash_hex: snapshot_hash.clone(),
         human_hint: Some("approve release".to_string()),
+        escrow_admission_artifact: None,
         ttl_secs: 60,
         wait_ms: 50,
         timeout_secs: 15,

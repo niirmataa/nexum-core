@@ -13,6 +13,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
 use nxms_mailbox_client::MailboxClient;
+use nxms_transport::admission::EscrowAdmissionArtifact;
 use nxms_transport::crypto::{Keys, decrypt, encrypt, suite_kem_id, suite_sig_id, SealedPacket};
 use nxms_transport::host_vault::HostVault;
 use nxms_transport::peers::{Peer, PeerBook};
@@ -56,6 +57,9 @@ pub struct SignReqConfig {
     pub multisig_txset_hex: String,
     pub snapshot_hash_hex: String,
     pub human_hint: Option<String>,
+    /// Escrow admission artifact — required by signers with runtime trust
+    /// enforcement (runtime_trust_bundle_path set).
+    pub escrow_admission_artifact: Option<EscrowAdmissionArtifact>,
     pub ttl_secs: u64,
     pub wait_ms: u64,
     pub timeout_secs: u64,
@@ -141,6 +145,15 @@ pub async fn sign_req(cfg: &SignReqConfig) -> Result<SignReqOutcome> {
     if local_id == cfg.to {
         bail!("peer local_id and signer id must differ");
     }
+    if let Some(artifact) = &cfg.escrow_admission_artifact
+        && artifact.escrow_id_hex.trim().to_ascii_lowercase() != escrow_id_hex
+    {
+        bail!(
+            "escrow admission artifact escrow_id mismatch: artifact {} != request {}",
+            artifact.escrow_id_hex,
+            escrow_id_hex
+        );
+    }
 
     // The signer entry gives us its FrodoKEM public key (envelope encryption)
     // and Falcon public key (response authentication).
@@ -162,7 +175,7 @@ pub async fn sign_req(cfg: &SignReqConfig) -> Result<SignReqOutcome> {
         action: cfg.action.clone(),
         multisig_txset_hex: multisig_txset_hex.clone(),
         snapshot_hash_hex: snapshot_hash_hex.clone(),
-        escrow_admission_artifact: None,
+        escrow_admission_artifact: cfg.escrow_admission_artifact.clone(),
         human_hint: cfg.human_hint.clone(),
     });
     let payload = NxmsPayload {

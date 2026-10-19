@@ -17,12 +17,11 @@
 # Sterta escrow 2/3 powstaje przy provision (prepare -> make_multisig 2 ->
 # exchange_multisig_keys x2, z obejsciem buga zapisu 0.18.5.0: ask-password 0).
 #
-# Uwaga (tryb lab): signerzy domyslnie NIE egzekwuja escrow-admission
-# (runtime_trust_bundle_path pominiete w signer-*.toml) — artefakt admission
-# wymaga podpisow ag-01+ag-02 (Falcon), a w repo nie ma CLI go budujacego
-# (wylacznie helpery testowe w Rust). Ustaw NXMS_STACK_ENFORCE_ADMISSION=1,
-# aby provision wrocil do pelnej egzekwowania runtime trust (wymaga wtedy
-# admission artifact w kazdym tx_sign_req).
+# Egzekwienie escrow-admission jest WLACZONE (runtime_trust_bundle_path w
+# signer-*.toml): kazdy tx_sign_req niesie artefakt admission podpisany przez
+# wartownikow ag-01+ag-02 (Falcon-1024-CT). Artefakt buduje i pieczetuje
+# 'nxms-host-bootstrap admission', a przeplyw przekazuje go przez
+# 'nxms-peer sign-req --admission-file' (patrz tools/nxms-flow.sh).
 #
 # Stan instancji: ~/.local/share/nxms-stack/task-NN/ (configi, sekrety, portfele,
 # logi, klucze .onion). Rekord zadan: ~/.local/share/nxms-tasks/task-NN.json
@@ -240,15 +239,10 @@ signer_c = "vault:/nxms/secrets/mailbox_ack_token_signer-c"
 peer1 = "vault:/nxms/secrets/mailbox_ack_token_peer1"
 EOF
     local x
-    # Egzekwowanie escrow-admission (runtime_trust_bundle_path) wymaga w tx_sign_req
-    # artefaktu admission podpisanego przez ag-01+ag-02 (Falcon) — nie ma dla niego
-    # CLI w repo, wiec domyslnie tryb lab bez egzekwowania (patrz naglowek).
-    local trust_line=""
-    if [ "${NXMS_STACK_ENFORCE_ADMISSION:-0}" = 1 ]; then
-        trust_line='runtime_trust_bundle_path = "/nxms/etc/runtime-trust.final.json"'
-    else
-        trust_line='# tryb lab: runtime_trust_bundle_path pominiete (brak CLI dla admission artifact)'
-    fi
+    # Egzekwienie escrow-admission: tx_sign_req wymaga artefaktu admission
+    # podpisanego przez ag-01+ag-02 (Falcon-1024-CT) — buduje go komenda
+    # 'nxms-host-bootstrap admission', patrz tools/nxms-flow.sh.
+    local trust_line='runtime_trust_bundle_path = "/nxms/etc/runtime-trust.final.json"'
     for x in a b c; do
         # Triada signerow 2/3: arbiter (a), seller (b), buyer (c). Portfel buyera
         # z ceremonii multisig nazywa sie buyer_wallet (haslo: wallet_pass_buyer).

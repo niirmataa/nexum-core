@@ -8,6 +8,10 @@
 #   1. snapshot kontraktu: snapshot new + hash + 3 podpisy Falconem
 #      (signer_a, signer_b, signer_c — klucze z host-vaultow) + activate w DB
 #      WSZYSTKICH signerow (snapshot_quorum = 3),
+#   1a. artefakt escrow admission: nxms-host-bootstrap admission pieczetowany
+#      kolejno przez wartownikow ag-01 i ag-02 (Falcon-1024-CT, hash POLITYKI
+#      snapshota, epoch z bundlu) — wymagany w kazdym tx_sign_req przy
+#      egzekwji runtime trust,
 #   2. przygotowanie portfela multisig 2/3: bezwarunkowa wymiana swiezych
 #      danych multisig miedzy WSZYSTKIMI trzema portfelami (a, b, buyer) —
 #      "Preparation for spending" wg monerodocs,
@@ -105,17 +109,17 @@ peer_pid=""; peer2_pid=""
 trap '[ -n "$peer_pid" ] && kill "$peer_pid" 2>/dev/null; [ -n "$peer2_pid" ] && kill "$peer2_pid" 2>/dev/null' EXIT
 
 # --- Krok 0: narzedzia, konfigi pomocnicze, parametry przeplywu -------------
-for b in nxms-peer nxms-escrow-orchestrator; do
-    if [ ! -x "$STATE/bin/$b" ]; then
-        log "dogrywam $b z buildu musl..."
-        dock cp "$DEV:/cache/target/release/$b" "$STATE/bin/$b" >/dev/null \
-            || die "brak $b w $DEV:/cache/target/release — najpierw: cargo build --release --workspace"
-        chmod 0755 "$STATE/bin/$b"
-    fi
+# Binarki sa zawsze odswiezane z buildu musl — flow zalezy od ich API
+# (np. --admission-file w nxms-peer).
+for b in nxms-peer nxms-escrow-orchestrator nxms-host-bootstrap; do
+    log "dogrywam $b z buildu musl..."
+    dock cp "$DEV:/cache/target/release/$b" "$STATE/bin/$b" >/dev/null \
+        || die "brak $b w $DEV:/cache/target/release — najpierw: cargo build --release --workspace"
+    chmod 0755 "$STATE/bin/$b"
 done
 
-grep -q '^runtime_trust_bundle_path' "$dir/etc/signer-$sx.toml" && die \
-    "signer-$sx egzekwuje escrow-admission (runtime_trust_bundle_path), a flow zaklada tryb lab — patrz naglowek tools/nxms-stack.sh (brak CLI do budowy admission artifact)"
+grep -q '^runtime_trust_bundle_path' "$dir/etc/signer-$sx.toml" \
+    || die "signer-$sx nie egzekwuje escrow-admission (brak runtime_trust_bundle_path) — flow wymaga enforcementu (patrz naglowek tools/nxms-stack.sh)"
 
 ts=$(date -u +%Y%m%dT%H%M%SZ)
 fdir=$dir/lib/flow-$ts
@@ -184,6 +188,28 @@ PYEOF
 log "snapshot canonical(sha3)=$canon"
 log "snapshot policy(sha256)=$policy_hash"
 
+# --- Krok 1a: artefakt escrow admission (ag-01 + ag-02) --------------------
+# Wymagany przez signerow z egzekwja runtime trust: tx_sign_req niesie
+# artefakt podpisany przez wartownikow ag-01 i ag-02 (Falcon-1024-CT).
+# Zwiezywany hash POLITYKI snapshota (tak weryfikuje signera) + epoch z bundlu.
+A=/nxms/lib/flow-$ts/admission.json
+ainfo=$(incont /opt/nxms/bin/nxms-host-bootstrap admission \
+    --bundle /nxms/etc/runtime-trust.final.json \
+    --escrow-id "$escrow" --snapshot-hash "$policy_hash" --action release \
+    --host-vault-dir /nxms/lib/host-vault-a \
+    --host-vault-passphrase-file /nxms/secrets/host_vault_passphrase_a \
+    --out "$A") || die "admission artifact (ag-01)"
+ainfo=$(incont /opt/nxms/bin/nxms-host-bootstrap admission \
+    --bundle /nxms/etc/runtime-trust.final.json \
+    --escrow-id "$escrow" --snapshot-hash "$policy_hash" --action release \
+    --host-vault-dir /nxms/lib/host-vault-b \
+    --host-vault-passphrase-file /nxms/secrets/host_vault_passphrase_b \
+    --in "$A" --out "$A") || die "admission artifact (ag-02)"
+ainfo=$(printf '%s' "$ainfo" | jsonparse)
+admission_hash=$(printf '%s' "$ainfo" | $PY -c 'import json,sys; print(json.load(sys.stdin)["artifact_hash_hex"])')
+trust_epoch=$(printf '%s' "$ainfo" | $PY -c 'import json,sys; print(json.load(sys.stdin)["runtime_trust_epoch"])')
+log "admission artifact: hash=$admission_hash epoch=$trust_epoch (2/2 sygnatur ag)"
+
 # --- Krok 2: portfel multisig — key images (Preparation for spending) -------
 # Wymiana jest BEZWARUNKOWA miedzy WSZYSTKIMI trzema portfelami przed kazdym
 # txsetem: monero 0.18.5 odrzuca podpis ze starymi danymi ("This signature was
@@ -237,7 +263,8 @@ log "txset_hash(sha256)=$txset_hash"
 # nie ma CLI ich tworzacego, wiec strumien przeplywu zasiewamy bezposrednio
 # (workflow stan 'funded', proposal z txsetem; snapshot_hash = hash POLITYKI).
 seed_orch_db() { # seed_orch_db <txset_hash_hex> <txset_hex>
-    DB="$dir/lib/orchestrator-flow.db" ESCROW="$escrow" TXH="$1" TXSET="$2" SNAP="$policy_hash" $PY - <<'PYEOF'
+    DB="$dir/lib/orchestrator-flow.db" ESCROW="$escrow" TXH="$1" TXSET="$2" SNAP="$policy_hash" \
+        ADM="$fdir/admission.json" ADM_HASH="$admission_hash" EPOCH="$trust_epoch" $PY - <<'PYEOF'
 import os, sqlite3, time
 db = sqlite3.connect(os.environ["DB"])
 now = int(time.time() * 1000)
@@ -248,18 +275,31 @@ db.execute("""CREATE TABLE IF NOT EXISTS proposal_blobs (
     escrow_id_hex TEXT PRIMARY KEY, action TEXT NOT NULL CHECK(action IN ('release','refund')),
     tx_data_hex TEXT NOT NULL, txset_hash_hex TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL)""")
+db.execute("""CREATE TABLE IF NOT EXISTS escrow_admission_artifacts (
+    escrow_id_hex TEXT PRIMARY KEY, snapshot_hash_hex TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('release','refund')),
+    runtime_trust_epoch TEXT NOT NULL, artifact_hash_hex TEXT NOT NULL,
+    artifact_json TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL)""")
 db.execute("INSERT OR REPLACE INTO workflow_instances VALUES (?,?,?,?,?,?)",
            (os.environ["ESCROW"], "funded", os.environ["SNAP"], '["signer_a","signer_b","signer_c","peer1"]', now, now))
 db.execute("INSERT OR REPLACE INTO proposal_blobs VALUES (?,?,?,?,?,?)",
            (os.environ["ESCROW"], "release", os.environ["TXSET"], os.environ["TXH"], now, now))
+artifact_json = open(os.environ["ADM"]).read()
+db.execute("INSERT OR REPLACE INTO escrow_admission_artifacts VALUES (?,?,?,?,?,?,?,?)",
+           (os.environ["ESCROW"], os.environ["SNAP"], "release", os.environ["EPOCH"],
+            os.environ["ADM_HASH"], artifact_json, now, now))
 db.commit()
 PYEOF
 }
 seed_orch_db "$txset_hash" "$txset" || die "seed orchestrator db"
 
 issue_token() { # issue_token <role> <op> <txset_hash> <wallet_id> <sandbox_id> <audience>
+    # --runtime-trust-bundle-path wlacza claims runtime_trust_epoch +
+    # escrow_admission_hash (wymagane przy egzekwji admission; orchestrator
+    # bierze hash z zasianego wiersza escrow_admission_artifacts).
     incont /opt/nxms/bin/nxms-escrow-orchestrator action-token issue \
         --db-path /nxms/lib/orchestrator-flow.db --bridge-token nxms-flow \
+        --runtime-trust-bundle-path /nxms/etc/runtime-trust.final.json \
         --escrow-id-hex "$escrow" --txset-hash-hex "$3" \
         --role "$1" --op "$2" \
         --issuer-vault-dir /nxms/lib/token-issuer \
@@ -308,6 +348,7 @@ dock exec -e RUST_LOG=warn "$name" /opt/nxms/bin/nxms-peer sign-req \
     --ack-token-file /nxms/secrets/mailbox_ack_token_peer1 \
     --to "$SIGNER" --escrow-id "$escrow" --action release \
     --txset-file /nxms/lib/flow-$ts/txset.hex --snapshot-hash "$canon" \
+    --admission-file /nxms/lib/flow-$ts/admission.json \
     --peers-file /nxms/etc/peers-peer1.json --wait-ms 1000 --timeout-secs 300 \
     > "$fdir/sign-req.out" 2> "$fdir/sign-req.err" &
 peer_pid=$!
@@ -334,6 +375,7 @@ dock exec -e RUST_LOG=warn "$name" /opt/nxms/bin/nxms-peer sign-req \
     --ack-token-file /nxms/secrets/mailbox_ack_token_peer1 \
     --to "$SIGNER2" --escrow-id "$escrow" --action release \
     --txset-file /nxms/lib/flow-$ts/txset.hex --snapshot-hash "$canon" \
+    --admission-file /nxms/lib/flow-$ts/admission.json \
     --peers-file /nxms/etc/peers-peer1.json --wait-ms 1000 --timeout-secs 300 \
     > "$fdir/sign-req-2.out" 2> "$fdir/sign-req-2.err" &
 peer2_pid=$!
@@ -376,6 +418,7 @@ doc = {
     "txset_wallet": "$tx_wallet", "signed_by": "$tx_wallet+buyer",
     "quorum": "2 z 3 niezaleznych stron",
     "txset_hash_hex": "$txset_hash",
+    "admission_hash_hex": "$admission_hash", "runtime_trust_epoch": "$trust_epoch",
     "snapshot_hash_hex": "$canon", "snapshot_policy_hash_hex": "$policy_hash",
     "sign_req": json.loads('''$outcome'''),
     "sign_req_round2": json.loads('''$round2_json'''),
@@ -390,6 +433,7 @@ echo "=== NXMS FLOW $task — PODSUMOWANIE ==="
 echo "escrow:            $escrow"
 echo "txset:             $tx_wallet :$tx_wrpc -> $RELEASE_ADDR ($amt XMR)"
 echo "txset_hash:        $txset_hash"
+echo "admission:         $admission_hash (ag-01+ag-02, epoch $trust_epoch)"
 echo "snapshot:          $canon (policy $policy_hash)"
 echo "runda 1:           $SIGNER ($role) — status=$status"
 echo "runda 2:           $SIGNER2 (buyer_second) — status=$r2_status"

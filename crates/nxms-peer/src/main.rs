@@ -130,6 +130,11 @@ struct SignReqArgs {
 
     #[arg(long)]
     human_hint: Option<String>,
+
+    /// Escrow admission artifact JSON (required by signers with runtime trust
+    /// enforcement; build with: nxms-host-bootstrap admission).
+    #[arg(long)]
+    admission_file: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -176,6 +181,17 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|| args.vault_dir.join("peers.json"));
             let txset_raw = std::fs::read_to_string(&args.txset_file)
                 .map_err(|e| anyhow!("txset_file failed to read '{}': {}", args.txset_file.display(), e))?;
+            let escrow_admission_artifact = match &args.admission_file {
+                Some(path) => {
+                    let raw = std::fs::read(path).map_err(|e| {
+                        anyhow!("admission_file failed to read '{}': {}", path.display(), e)
+                    })?;
+                    Some(serde_json::from_slice(&raw).map_err(|e| {
+                        anyhow!("admission_file invalid '{}': {}", path.display(), e)
+                    })?)
+                }
+                None => None,
+            };
             let cfg = SignReqConfig {
                 vault_dir: args.vault_dir.clone(),
                 passphrase,
@@ -190,6 +206,7 @@ async fn main() -> Result<()> {
                 multisig_txset_hex: txset_raw,
                 snapshot_hash_hex: args.snapshot_hash.clone(),
                 human_hint: args.human_hint.clone(),
+                escrow_admission_artifact,
                 ttl_secs: args.ttl_secs,
                 wait_ms: args.wait_ms,
                 timeout_secs: args.timeout_secs,

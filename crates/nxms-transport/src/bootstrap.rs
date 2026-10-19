@@ -335,8 +335,12 @@ pub fn verify_runtime_trust_projection_for_local_with_passphrase(
     Ok(bundle)
 }
 
+/// Read an owner-only secret file (e.g. a host vault passphrase file) as
+/// trimmed text. Exposed for CLI tools that must apply the same secret-file
+/// policy as the bootstrap helpers (the admission command reads guard
+/// passphrases through this).
 #[cfg(unix)]
-fn read_owner_only_text(path: &Path, label: &str) -> Result<String> {
+pub fn read_owner_only_text(path: &Path, label: &str) -> Result<String> {
     let mut file = std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
@@ -357,7 +361,7 @@ fn read_owner_only_text(path: &Path, label: &str) -> Result<String> {
 }
 
 #[cfg(not(unix))]
-fn read_owner_only_text(path: &Path, label: &str) -> Result<String> {
+pub fn read_owner_only_text(path: &Path, label: &str) -> Result<String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| anyhow!("{label} failed to read '{}': {}", path.display(), e))?;
     let out = raw.trim().to_string();

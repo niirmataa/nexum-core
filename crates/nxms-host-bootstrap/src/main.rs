@@ -1,12 +1,16 @@
-use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
+use anyhow::{Result, anyhow, bail};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use nxms_transport::admission::EscrowAdmissionArtifact;
 use nxms_transport::bootstrap::{
     export_action_token_issuer, export_host_identity, generate_action_token_issuer_vault,
     generate_local_host_vault, init_runtime_trust_bundle, materialize_runtime_trust_for_local,
-    now_ms, sign_runtime_trust_bundle, verify_runtime_trust_bundle,
+    now_ms, read_owner_only_text, sign_runtime_trust_bundle, verify_runtime_trust_bundle,
     verify_runtime_trust_projection_for_local,
 };
 use nxms_transport::crypto::{suite_kem_id, suite_sig_id};
+use nxms_transport::host_vault::HostVault;
+use nxms_transport::trust::RuntimeTrustBundle;
+use nxms_transport::wire::EscrowAction;
 use serde_json::to_string_pretty;
 use std::path::PathBuf;
 
@@ -29,6 +33,8 @@ enum Command {
     VerifyBundle(VerifyBundleArgs),
     MaterializeLocal(MaterializeLocalArgs),
     CheckLocal(CheckLocalArgs),
+    /// Build/extend an escrow admission artifact signed by the AG guards.
+    Admission(AdmissionArgs),
 }
 
 #[derive(Debug, Args)]
@@ -181,6 +187,56 @@ struct CheckLocalArgs {
     action_token_public_key_pem_path: PathBuf,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AdmissionActionArg {
+    Release,
+    Refund,
+}
+
+impl From<AdmissionActionArg> for EscrowAction {
+    fn from(value: AdmissionActionArg) -> Self {
+        match value {
+            AdmissionActionArg::Release => EscrowAction::Release,
+            AdmissionActionArg::Refund => EscrowAction::Refund,
+        }
+    }
+}
+
+#[derive(Debug, Args)]
+struct AdmissionArgs {
+    /// Final runtime trust bundle (after sign-bundle/verify-bundle).
+    #[arg(long)]
+    bundle: PathBuf,
+
+    #[arg(long)]
+    escrow_id: String,
+
+    /// Snapshot POLICY hash (sha256 canonical JSON) as required by the signer.
+    #[arg(long)]
+    snapshot_hash: String,
+
+    #[arg(long)]
+    action: AdmissionActionArg,
+
+    #[arg(long)]
+    host_vault_dir: PathBuf,
+
+    #[arg(long)]
+    host_vault_passphrase_file: PathBuf,
+
+    /// Existing artifact to extend with this guard's signature
+    /// (first guard omits it; second guard passes the first guard's --out).
+    #[arg(long = "in")]
+    input: Option<PathBuf>,
+
+    #[arg(long)]
+    out: PathBuf,
+
+    /// admitted_at_unix_ms of a newly created artifact (default: now).
+    #[arg(long)]
+    admitted_at: Option<u64>,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
@@ -299,6 +355,121 @@ fn main() -> Result<()> {
                 }))?
             );
         }
+        Command::Admission(args) => handle_admission(args)?,
     }
+    Ok(())
+}
+
+/// Build or extend an escrow admission artifact.
+///
+/// Called once per AG guard (ag-01, then ag-02): the first call creates the
+/// artifact and writes `--out`; the second adds its signature via `--in`.
+/// The guard identity (signer_id/signer_role) is derived from the runtime
+/// trust bundle by matching the vault's Falcon public key, so it always
+/// matches what `verify_against_bundle` expects.
+fn handle_admission(args: AdmissionArgs) -> Result<()> {
+    let bundle = RuntimeTrustBundle::load_verified(&args.bundle)?;
+    let action = EscrowAction::from(args.action);
+    let passphrase = read_owner_only_text(
+        &args.host_vault_passphrase_file,
+        "host_vault_passphrase_file",
+    )?;
+    let vault = HostVault::load(&args.host_vault_dir, &passphrase)?;
+    let guard = bundle
+        .peers
+        .iter()
+        .find(|peer| peer.sig_pk_b64 == vault.keys.sig_pk_b64)
+        .ok_or_else(|| {
+            anyhow!(
+                "host vault sig_pk_b64 is not in runtime trust bundle {}",
+                args.bundle.display()
+            )
+        })?;
+    let signer_id = guard.id.clone();
+    let signer_role = guard.role.clone();
+
+    let mut artifact = match &args.input {
+        Some(path) => {
+            let raw = std::fs::read(path)
+                .map_err(|e| anyhow!("failed to read admission artifact {}: {e}", path.display()))?;
+            let artifact: EscrowAdmissionArtifact = serde_json::from_slice(&raw)
+                .map_err(|e| anyhow!("invalid admission artifact {}: {e}", path.display()))?;
+            // These fields are covered by the existing signature — refuse to
+            // build a self-inconsistent artifact.
+            if artifact.escrow_id_hex.trim() != args.escrow_id.trim() {
+                bail!("admission artifact escrow_id mismatch: --in {} != --escrow-id {}",
+                    artifact.escrow_id_hex, args.escrow_id);
+            }
+            if artifact.snapshot_hash_hex.trim() != args.snapshot_hash.trim() {
+                bail!("admission artifact snapshot_hash mismatch: --in {} != --snapshot-hash {}",
+                    artifact.snapshot_hash_hex, args.snapshot_hash);
+            }
+            if artifact.action != action {
+                bail!("admission artifact action mismatch: --in {:?} != --action {:?}",
+                    artifact.action, action);
+            }
+            if artifact.runtime_trust_epoch.trim() != bundle.trust_epoch.trim() {
+                bail!("admission artifact runtime_trust_epoch mismatch: --in {} != bundle {}",
+                    artifact.runtime_trust_epoch, bundle.trust_epoch);
+            }
+            artifact
+        }
+        None => EscrowAdmissionArtifact::new(
+            &args.escrow_id,
+            &args.snapshot_hash,
+            action,
+            bundle.trust_epoch.clone(),
+            args.admitted_at.unwrap_or_else(now_ms),
+        ),
+    };
+
+    artifact.sign_with_local_keys(&signer_id, &signer_role, &vault.keys, now_ms())?;
+    artifact
+        .validate_unsigned()
+        .map_err(|e| anyhow!("admission artifact invalid after signing: {e}"))?;
+    if artifact.runtime_trust_epoch.trim() != bundle.trust_epoch.trim() {
+        bail!("escrow admission runtime_trust_epoch mismatch against bundle");
+    }
+    let artifact_hash_hex = artifact.hash_hex()?;
+    std::fs::write(&args.out, serde_json::to_vec_pretty(&artifact)?)
+        .map_err(|e| anyhow!("failed to write {}: {e}", args.out.display()))?;
+
+    // Finalize check: a complete artifact must verify against the bundle.
+    // Before the second guard signs, only the guard-signature count may fail.
+    let verified = match artifact.verify_against_bundle(&bundle) {
+        Ok(()) => true,
+        Err(err) if artifact.signatures.len() < 2 => {
+            println!(
+                "admission: weryfikacja niepelna ({}/2 sygnatur): {}",
+                artifact.signatures.len(),
+                err
+            );
+            false
+        }
+        Err(err) => return Err(err),
+    };
+
+    println!(
+        "{}",
+        to_string_pretty(&serde_json::json!({
+            "out": args.out.display().to_string(),
+            "escrow_id_hex": artifact.escrow_id_hex,
+            "snapshot_hash_hex": artifact.snapshot_hash_hex,
+            "action": artifact.action,
+            "runtime_trust_epoch": artifact.runtime_trust_epoch,
+            "admitted_at_unix_ms": artifact.admitted_at_unix_ms,
+            "artifact_hash_hex": artifact_hash_hex,
+            "signatures": artifact
+                .signatures
+                .iter()
+                .map(|sig| serde_json::json!({
+                    "signer_id": sig.signer_id,
+                    "signer_role": sig.signer_role,
+                    "alg": sig.alg,
+                }))
+                .collect::<Vec<_>>(),
+            "verified": verified,
+        }))?
+    );
     Ok(())
 }
