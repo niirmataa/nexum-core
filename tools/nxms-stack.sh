@@ -159,16 +159,16 @@ max_rows_global = 1000000
 rate_limit_ip_per_min = 300
 rate_limit_to_per_min = 600
 production_hardening = false
-push_token = "vault:$s/mailbox_push_token"
-admin_token = "vault:$s/mailbox_admin_token"
+push_token = "vault:/nxms/secrets/mailbox_push_token"
+admin_token = "vault:/nxms/secrets/mailbox_admin_token"
 [pull_tokens]
-orchestrator = "vault:$s/mailbox_pull_token_orchestrator"
-signer-a = "vault:$s/mailbox_pull_token_signer-a"
-signer-b = "vault:$s/mailbox_pull_token_signer-b"
+orchestrator = "vault:/nxms/secrets/mailbox_pull_token_orchestrator"
+signer-a = "vault:/nxms/secrets/mailbox_pull_token_signer-a"
+signer-b = "vault:/nxms/secrets/mailbox_pull_token_signer-b"
 [ack_tokens]
-orchestrator = "vault:$s/mailbox_ack_token_orchestrator"
-signer-a = "vault:$s/mailbox_ack_token_signer-a"
-signer-b = "vault:$s/mailbox_ack_token_signer-b"
+orchestrator = "vault:/nxms/secrets/mailbox_ack_token_orchestrator"
+signer-a = "vault:/nxms/secrets/mailbox_ack_token_signer-a"
+signer-b = "vault:/nxms/secrets/mailbox_ack_token_signer-b"
 EOF
     local x
     for x in a b; do
@@ -181,15 +181,15 @@ wallet_id = "wallet-$id-$x"
 nettype = "stagenet"
 peers_path = "/nxms/etc/peers-$x.json"
 host_vault_dir = "/nxms/lib/host-vault-$x"
-host_vault_passphrase = "vault:$s/host_vault_passphrase_$x"
+host_vault_passphrase = "vault:/nxms/secrets/host_vault_passphrase_$x"
 runtime_trust_bundle_path = "/nxms/etc/runtime-trust.final.json"
 db_path = "/nxms/lib/signer-$x.db"
 mailbox_url = "http://$onion"
-mailbox_push_token = "vault:$s/mailbox_push_token"
-mailbox_pull_token = "vault:$s/mailbox_pull_token_signer-$x"
-mailbox_ack_token = "vault:$s/mailbox_ack_token_signer-$x"
-mailbox_admin_token = "vault:$s/mailbox_admin_token"
-worker_service_token = "vault:$s/worker_service_token_$x"
+mailbox_push_token = "vault:/nxms/secrets/mailbox_push_token"
+mailbox_pull_token = "vault:/nxms/secrets/mailbox_pull_token_signer-$x"
+mailbox_ack_token = "vault:/nxms/secrets/mailbox_ack_token_signer-$x"
+mailbox_admin_token = "vault:/nxms/secrets/mailbox_admin_token"
+worker_service_token = "vault:/nxms/secrets/worker_service_token_$x"
 tor_socks5h = "socks5h://127.0.0.1:$socks"
 allow_remote_wallet_rpc = false
 production_hardening = false
@@ -202,9 +202,9 @@ max_txset_hex_len = 16777216
 [wallet_rpc]
 endpoint = "http://127.0.0.1:$([ "$x" = a ] && echo "$wrpc_a" || echo "$wrpc_b")"
 wallet_name = "escrow_wallet_$x"
-wallet_password = "vault:$s/wallet_pass_$x"
-username = "vault:$s/wrpc_user_$x"
-password = "vault:$s/wrpc_pass_$x"
+wallet_password = "vault:/nxms/secrets/wallet_pass_$x"
+username = "vault:/nxms/secrets/wrpc_user_$x"
+password = "vault:/nxms/secrets/wrpc_pass_$x"
 [wallet_provision]
 enabled = false
 wallet_cli_path = "/usr/bin/monero-wallet-cli"
@@ -266,7 +266,7 @@ EOF
         printf 'ceremonia multisig 2/3 dla %s...\n' "$id"
         dock run --rm --network host --mount "type=bind,source=$dir,target=/nxms" "$CT" sh -c "
             set -e
-            apk add --no-cache $MONERO_PKG >/dev/null 2>&1
+            apk add --no-cache $MONERO_PKG curl >/dev/null 2>&1
             export HOME=/nxms/lib
             grab() { grep -o 'Multisig[A-Za-z0-9+/=]\{30,\}' | tail -1; }
             wcli() { # wcli <rola> <haslo> <komenda...>
@@ -339,21 +339,23 @@ done
 onion=$(cat /nxms/tor/hs/hostname 2>/dev/null || true)
 printf '%s\n' "$onion" > /nxms/logs/onion
 echo wallet-rpc > /nxms/logs/stage
+# Uwaga (poligon): --disable-rpc-login zamiast digest — klient digest signera
+# nie przechodzi wyzwania epee (zadanie CORE do zbadania; curl --digest dziala).
 monero-wallet-rpc --stagenet --non-interactive --daemon-address 127.0.0.1:38081 \
-    --trusted-daemon --wallet-file /nxms/lib/wallets/escrow_wallet_a \
-    --password "$(cat /nxms/secrets/wallet_pass_a)" \
-    --rpc-bind-ip 127.0.0.1 --rpc-bind-port WRPC_A \
-    --rpc-login "$(cat /nxms/secrets/wrpc_user_a):$(cat /nxms/secrets/wrpc_pass_a)" \
+    --trusted-daemon --wallet-dir /nxms/lib/wallets \
+    --rpc-bind-ip 127.0.0.1 --rpc-bind-port WRPC_A --disable-rpc-login \
     --log-file /nxms/logs/wallet-rpc-a.log --disable-rpc-ban > /nxms/logs/wallet-rpc-a.out 2>&1 &
 monero-wallet-rpc --stagenet --non-interactive --daemon-address 127.0.0.1:38081 \
-    --trusted-daemon --wallet-file /nxms/lib/wallets/escrow_wallet_b \
-    --password "$(cat /nxms/secrets/wallet_pass_b)" \
-    --rpc-bind-ip 127.0.0.1 --rpc-bind-port WRPC_B \
-    --rpc-login "$(cat /nxms/secrets/wrpc_user_b):$(cat /nxms/secrets/wrpc_pass_b)" \
+    --trusted-daemon --wallet-dir /nxms/lib/wallets \
+    --rpc-bind-ip 127.0.0.1 --rpc-bind-port WRPC_B --disable-rpc-login \
     --log-file /nxms/logs/wallet-rpc-b.log --disable-rpc-ban > /nxms/logs/wallet-rpc-b.out 2>&1 &
 echo mailbox > /nxms/logs/stage
 /opt/nxms/bin/nxms-mailbox serve --config /nxms/etc/mailbox.toml >> /nxms/logs/mailbox.log 2>&1 &
-sleep 3
+echo "czekam na wallet-rpc..." >> /nxms/logs/mailbox.log
+for i in $(seq 1 60); do
+    nc -z 127.0.0.1 WRPC_A 2>/dev/null && nc -z 127.0.0.1 WRPC_B 2>/dev/null && break
+    sleep 2
+done
 echo signers > /nxms/logs/stage
 /opt/nxms/bin/nxms-signer run --config /nxms/etc/signer-a.toml >> /nxms/logs/signer-a.log 2>&1 &
 /opt/nxms/bin/nxms-signer run --config /nxms/etc/signer-b.toml >> /nxms/logs/signer-b.log 2>&1 &
