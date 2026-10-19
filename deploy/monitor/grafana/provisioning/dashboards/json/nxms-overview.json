@@ -1,0 +1,99 @@
+{
+  "title": "NXMS — przegląd",
+  "uid": "nxms-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "browser",
+  "templating": {
+    "list": [
+      {
+        "name": "lab",
+        "label": "Lab",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(nxms_lab_confirmations, lab)",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Wysokość łańcucha",
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 5},
+      "datasource": "Prometheus",
+      "targets": [{"expr": "nxms_monero_height", "legendFormat": "wysokość"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Kopanie (hashrate)",
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 5},
+      "datasource": "Prometheus",
+      "targets": [{"expr": "nxms_mining_hashrate", "legendFormat": "H/s"}],
+      "fieldConfig": {"defaults": {"unit": "Hs"}, "overrides": []}
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Zadania (uruchomione)",
+      "gridPos": {"x": 12, "y": 0, "w": 6, "h": 5},
+      "datasource": "Prometheus",
+      "targets": [{"expr": "count(nxms_task_info{state=\"running\"}) or vector(0)", "legendFormat": "running"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Monero osiągalne",
+      "gridPos": {"x": 18, "y": 0, "w": 6, "h": 5},
+      "datasource": "Prometheus",
+      "targets": [{"expr": "nxms_monero_reachable", "legendFormat": "reachable"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Potwierdzenia labów (wg wyboru)",
+      "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8},
+      "datasource": "Prometheus",
+      "targets": [{"expr": "nxms_lab_confirmations{lab=~\"$lab\"}", "legendFormat": "{{lab}} ({{state}})"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Rola zadań: aktywne / wszystkie",
+      "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "nxms_task_roles_active", "legendFormat": "{{task}} aktywne"},
+        {"expr": "nxms_task_roles_total", "legendFormat": "{{task}} wszystkie"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "CPU kontenerów (cAdvisor)",
+      "gridPos": {"x": 0, "y": 13, "w": 12, "h": 8},
+      "datasource": "Prometheus",
+      "targets": [{"expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name!=\"\"}[2m]))", "legendFormat": "{{name}}"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []}
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Pamięć kontenerów (cAdvisor)",
+      "gridPos": {"x": 12, "y": 13, "w": 12, "h": 8},
+      "datasource": "Prometheus",
+      "targets": [{"expr": "container_memory_working_set_bytes{name!=\"\"}", "legendFormat": "{{name}}"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}
+    }
+  ]
+}

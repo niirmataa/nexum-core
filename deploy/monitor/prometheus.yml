@@ -1,0 +1,16 @@
+# OPS: konfiguracja Prometheus dla poligonu NXMS (tools/nxms-monitor.sh).
+# Wszystkie kontenery dzialaja w trybie host network — targety to 127.0.0.1.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: nxms-exporter
+    static_configs:
+      - targets: ["127.0.0.1:9105"]
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["127.0.0.1:8090"]
