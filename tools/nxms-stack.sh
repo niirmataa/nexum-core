@@ -7,9 +7,19 @@
 #   - rola mailbox (nxms-mailbox) na 127.0.0.1:41NN,
 #   - dwoma signerami (nxms-signer) przez socks5h wlasnego Tor do .onion mailboxa,
 #   - DWOMA realnymi wallet-rpc (monero 0.18.5) na 127.0.0.1:43NN/44NN z
-#     wlasnym portfelem multisig 2/3 (escrow_wallet_a/b; ceremonia wg monerodocs).
+#     wlasnym portfelem multisig 2/3 (escrow_wallet_a/b; ceremonia wg monerodocs),
+#   - peerem przeplywu escrow (peer1): host-vault + tozsamosc w bundlu zaufania
+#     i w allowlistach peers-*.json signerow (nadawca tx_sign_req dla
+#     tools/nxms-flow.sh; skrzynka odbiorcza peer1 w mailboxu).
 # Sterta escrow 2/3 powstaje przy provision (prepare -> make_multisig 2 ->
 # exchange_multisig_keys x2, z obejsciem buga zapisu 0.18.5.0: ask-password 0).
+#
+# Uwaga (tryb lab): signerzy domyslnie NIE egzekwuja escrow-admission
+# (runtime_trust_bundle_path pominiete w signer-*.toml) — artefakt admission
+# wymaga podpisow ag-01+ag-02 (Falcon), a w repo nie ma CLI go budujacego
+# (wylacznie helpery testowe w Rust). Ustaw NXMS_STACK_ENFORCE_ADMISSION=1,
+# aby provision wrocil do pelnej egzekwowania runtime trust (wymaga wtedy
+# admission artifact w kazdym tx_sign_req).
 #
 # Stan instancji: ~/.local/share/nxms-stack/task-NN/ (configi, sekrety, portfele,
 # logi, klucze .onion). Rekord zadan: ~/.local/share/nxms-tasks/task-NN.json
@@ -21,6 +31,8 @@
 #   fund    — dofinansuj escrow instancji z faucetu (NXMS_STACK_FUND_XMR)
 #   down    — usun kontenery (stan i portfele zostaja)
 #   clean   — usun kontenery i caly stan instancji
+# Realny przeplyw escrow (peer -> mailbox -> signer) na zywym stosie:
+#   bash tools/nxms-flow.sh <task-id> [kwota-xmr] [--submit]
 set -u
 
 STATE=${NXMS_STACK_STATE:-$HOME/.local/share/nxms-stack}
@@ -92,6 +104,40 @@ open(path, "w").write(json.dumps(doc, indent=2))
 PYEOF
 }
 
+# --- Peer przeplywu escrow (peer1): host-vault + tozsamosc + allowlisty ---
+provision_peer_identity() { # provision_peer_identity <id> <dir> <onion>
+    local id=$1 dir=$2 onion=$3 s=$dir/secrets hb=$STATE/bin/nxms-host-bootstrap
+    [ -f "$dir/lib/id-peer.json" ] && return 0
+    "$hb" generate-host-vault --local-id peer1 --host-vault-dir "$dir/lib/peer-vault" \
+        --host-vault-passphrase-file "$s/peer_vault_pass" >/dev/null || die "host-vault peer1 ($id)"
+    "$hb" export-host-identity --local-id peer1 --role peer --host "$onion" --port 80 \
+        --host-vault-dir "$dir/lib/peer-vault" --host-vault-passphrase-file "$s/peer_vault_pass" \
+        --out "$dir/lib/id-peer.json" >/dev/null || die "export identity peer1 ($id)"
+    printf '%s\n' "peer1: host-vault + tozsamosc ($id)"
+}
+
+ensure_peer_in_peers_files() { # ensure_peer_in_peers_files <dir>
+    # Idempotentnie dopisuje wpis peer1 do peers-*.json (struktura Peer z
+    # nxms-transport). Dla nowych stosow materialize-local wypisze peera sam
+    # (bundle zawiera jego tozsamosc); to jest backfill dla stosow starszych.
+    local dir=$1
+    PEER_IDENTITY="$dir/lib/id-peer.json" /usr/bin/python3 - "$dir/etc/peers-a.json" "$dir/etc/peers-b.json" <<'PYEOF'
+import json, os, sys
+ident = json.load(open(os.environ["PEER_IDENTITY"]))
+peer = {"id": ident["host_id"], "host": ident["host"], "port": ident["port"],
+        "kem_pk_b64": ident["kem_pk_b64"], "sig_pk_b64": ident["sig_pk_b64"]}
+for path in sys.argv[1:]:
+    doc = json.load(open(path))
+    peers = doc.setdefault("peers", [])
+    if any(p.get("id") == peer["id"] for p in peers):
+        print(f"peers: wpis {peer['id']} juz jest w {path}")
+        continue
+    peers.append(peer)
+    open(path, "w").write(json.dumps(doc, indent=2))
+    print(f"peers: dopisano wpis {peer['id']} do {path}")
+PYEOF
+}
+
 provision() { # provision <id> <port> <socks_port>
     local id=$1 port=$2 socks=$3 dir=$STATE/$1
     local wrpc_a=$((port + 200)) wrpc_b=$((port + 300))
@@ -100,8 +146,9 @@ provision() { # provision <id> <port> <socks_port>
     local s=$dir/secrets
     if [ ! -f "$s/mailbox_admin_token" ]; then
         gen_token > "$s/mailbox_admin_token"; gen_token > "$s/mailbox_push_token"
-        for r in orchestrator signer-a signer-b; do gen_token > "$s/mailbox_pull_token_$r"; gen_token > "$s/mailbox_ack_token_$r"; done
+        for r in orchestrator signer-a signer-b peer1; do gen_token > "$s/mailbox_pull_token_$r"; gen_token > "$s/mailbox_ack_token_$r"; done
         for r in a b; do gen_token > "$s/worker_service_token_$r"; gen_token > "$s/host_vault_passphrase_$r"; done
+        gen_token > "$s/peer_vault_pass"
         openssl genpkey -algorithm ed25519 -out "$s/action_token_priv.pem" 2>/dev/null
         openssl pkey -in "$s/action_token_priv.pem" -pubout -out "$s/action_token_pub.pem" 2>/dev/null
         gen_token > "$s/token_issuer_pass"
@@ -112,6 +159,11 @@ provision() { # provision <id> <port> <socks_port>
             echo "lab-only" > "$s/wallet_rpc_password_$r"
         done
     fi
+    # Backfill sekretow dodanych po pierwszym provisionie (stosy juz istniejace).
+    local sf
+    for sf in mailbox_pull_token_peer1 mailbox_ack_token_peer1 peer_vault_pass; do
+        [ -f "$s/$sf" ] || gen_token > "$s/$sf"
+    done
     chmod 700 "$s"; chmod 600 "$s"/* 2>/dev/null || true
     # Klucze ukrytej uslugi z gory (root, jak runtime) — stabilny .onion miedzy
     # restartami i znany przed ceremonia tozsamosci (wymog .onion w peerach).
@@ -162,15 +214,29 @@ production_hardening = false
 push_token = "vault:/nxms/secrets/mailbox_push_token"
 admin_token = "vault:/nxms/secrets/mailbox_admin_token"
 [pull_tokens]
+# Klucze to NAZWY SKRZYNEK (to z koperty = lokalne id roli) — uwierzytelnienie
+# pull jest per-inbox; historyczne klucze signer-a/signer-b nie dzialaly, bo
+# signerzy pulluja skrzynke signer_a/signer_b (underscore, = local_id).
 orchestrator = "vault:/nxms/secrets/mailbox_pull_token_orchestrator"
-signer-a = "vault:/nxms/secrets/mailbox_pull_token_signer-a"
-signer-b = "vault:/nxms/secrets/mailbox_pull_token_signer-b"
+signer_a = "vault:/nxms/secrets/mailbox_pull_token_signer-a"
+signer_b = "vault:/nxms/secrets/mailbox_pull_token_signer-b"
+peer1 = "vault:/nxms/secrets/mailbox_pull_token_peer1"
 [ack_tokens]
 orchestrator = "vault:/nxms/secrets/mailbox_ack_token_orchestrator"
-signer-a = "vault:/nxms/secrets/mailbox_ack_token_signer-a"
-signer-b = "vault:/nxms/secrets/mailbox_ack_token_signer-b"
+signer_a = "vault:/nxms/secrets/mailbox_ack_token_signer-a"
+signer_b = "vault:/nxms/secrets/mailbox_ack_token_signer-b"
+peer1 = "vault:/nxms/secrets/mailbox_ack_token_peer1"
 EOF
     local x
+    # Egzekwowanie escrow-admission (runtime_trust_bundle_path) wymaga w tx_sign_req
+    # artefaktu admission podpisanego przez ag-01+ag-02 (Falcon) — nie ma dla niego
+    # CLI w repo, wiec domyslnie tryb lab bez egzekwowania (patrz naglowek).
+    local trust_line=""
+    if [ "${NXMS_STACK_ENFORCE_ADMISSION:-0}" = 1 ]; then
+        trust_line='runtime_trust_bundle_path = "/nxms/etc/runtime-trust.final.json"'
+    else
+        trust_line='# tryb lab: runtime_trust_bundle_path pominiete (brak CLI dla admission artifact)'
+    fi
     for x in a b; do
         cat > "$dir/etc/signer-$x.toml" <<EOF
 # NXMS stack $id: signer-$x (realna granica Monero).
@@ -182,7 +248,7 @@ nettype = "stagenet"
 peers_path = "/nxms/etc/peers-$x.json"
 host_vault_dir = "/nxms/lib/host-vault-$x"
 host_vault_passphrase = "vault:/nxms/secrets/host_vault_passphrase_$x"
-runtime_trust_bundle_path = "/nxms/etc/runtime-trust.final.json"
+$trust_line
 db_path = "/nxms/lib/signer-$x.db"
 mailbox_url = "http://$onion"
 mailbox_push_token = "vault:/nxms/secrets/mailbox_push_token"
@@ -237,6 +303,7 @@ EOF
         "$hb" export-host-identity --local-id signer_b --role ag-02 --host "$onion" --port 80 \
             --host-vault-dir "$dir/lib/host-vault-b" --host-vault-passphrase-file "$s/host_vault_passphrase_b" \
             --out "$dir/lib/id-b.json" >/dev/null || die "export identity b ($id)"
+        provision_peer_identity "$id" "$dir" "$onion"
         "$hb" generate-action-token-issuer-vault --issuer nxms-auth --algorithm EDDSA \
             --action-token-issuer-vault-dir "$dir/lib/token-issuer" \
             --action-token-issuer-vault-passphrase-file "$s/token_issuer_pass" >/dev/null || die "token issuer vault ($id)"
@@ -245,6 +312,7 @@ EOF
             --out "$dir/lib/issuer.json" >/dev/null || die "token issuer export ($id)"
         "$hb" init-bundle --trust-epoch "stack-$id-$(date -u +%Y%m%d)" \
             --host-identity "$dir/lib/id-a.json" --host-identity "$dir/lib/id-b.json" \
+            --host-identity "$dir/lib/id-peer.json" \
             --action-token-issuer-bundle "$dir/lib/issuer.json" \
             --out "$dir/lib/bundle.json" >/dev/null || die "init-bundle ($id)"
         "$hb" sign-bundle --bundle "$dir/lib/bundle.json" --signer-id signer_a --signer-role ag-01 \
@@ -261,6 +329,7 @@ EOF
         "$hb" materialize-local --bundle "$dir/lib/bundle.s2.json" --local-id signer_b \
             --host-vault-dir "$dir/lib/host-vault-b" --host-vault-passphrase-file "$s/host_vault_passphrase_b" \
             --peers-out "$dir/etc/peers-b.json" --action-token-public-key-pem-out "$s/action_token_pub.pem" >/dev/null || die "materialize b ($id)"
+        ensure_peer_in_peers_files "$dir"
 
         # --- Ceremonia multisig 2/3 (monero 0.18.5 w kontenerze) ---
         printf 'ceremonia multisig 2/3 dla %s...\n' "$id"
@@ -322,6 +391,11 @@ EOF
         " || die "ceremonia multisig nie przeszla ($id)"
         touch "$dir/lib/provisioned"
     fi
+
+    # Backfill dla stosow provisionowanych przed pojawieniem sie peera przeplywu:
+    # brakujacy host-vault/tozsamosc peer1 + wpis w allowlistach peers-*.json.
+    provision_peer_identity "$id" "$dir" "$onion"
+    ensure_peer_in_peers_files "$dir"
 
     cat > "$dir/run.sh" <<'EOF'
 #!/bin/sh
