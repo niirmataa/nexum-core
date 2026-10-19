@@ -50,6 +50,16 @@ function renderSystem(result) {
       agent.started ? "ok" : "bad")));
 }
 
+function pomiaryLink(target) {
+  const link = document.createElement("a");
+  link.className = "system-label";
+  link.href = `http://127.0.0.1:3000/d/nxms-overview?var-lab=${encodeURIComponent(target)}&from=now-3h&to=now`;
+  link.target = "_blank";
+  link.rel = "noreferrer";
+  link.textContent = "pomiary";
+  return link;
+}
+
 function renderLab(result) {
   const instances = result.instances || [];
   const stateMap = {
@@ -66,7 +76,9 @@ function renderLab(result) {
             : inst.tx_hash
               ? `${inst.state} · tx ${inst.tx_hash.slice(0, 8)}`
               : `${inst.state || "?"}`;
-        return systemItem(`${inst.id} · ${address}…`, detail, stateMap[inst.state] || "unknown");
+        const item = systemItem(`${inst.id} · ${address}…`, detail, stateMap[inst.state] || "unknown");
+        item.append(pomiaryLink(inst.id));
+        return item;
       })
     : [systemItem("instancje", "brak — bash tools/l.sh up", "info")];
   fillSystemList("system-lab", items);
@@ -88,7 +100,11 @@ function renderTasks(result) {
         const details = roles.filter((role) => role.detail)
           .map((role) => `${role.name || "?"}: ${role.detail}`).join(" · ");
         return [
-          systemItem(`${inst.id || "?"} · ${kind}`, `${state}${step}`, stateMap[inst.state] || "unknown"),
+          (() => {
+            const row = systemItem(`${inst.id || "?"} · ${kind}`, `${state}${step}`, stateMap[inst.state] || "unknown");
+            row.append(pomiaryLink(inst.container || inst.id || ""));
+            return row;
+          })(),
           systemItem(`${inst.id || "?"} · role`,
             `${active}/${roles.length} aktywnych${details ? ` · ${details}` : ""}`,
             roles.length > 0 && active === roles.length ? "ok" : "info"),
